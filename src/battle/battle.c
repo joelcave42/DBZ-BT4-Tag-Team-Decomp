@@ -313,6 +313,7 @@ s32 Battle_Draw(void) {
 /* Draws the frame with two views: the stage pass and the fighter pass run once per view, the rest once. */
 s32 Battle_DrawSplit(void) {
     s32 i;
+    { extern void TagBattle_HudCaptureView(void *view); BtlCam_SelectView(0); TagBattle_HudCaptureView((void *)gBtlCamView); }
 
     Dbg_ProfMark(gBattleProf);
     Gfx_MarkPass(1);

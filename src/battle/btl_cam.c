@@ -697,6 +697,11 @@ s32 BtlCam_GetPriorityView(void) {
     return best;
 }
 
+/* 1 while the second battle view is the selected one. */
+s32 BtlCam_CurIndex(void) {
+    return gBtlCam != NULL && gBtlCam->cur == &gBtlCam->views[1];
+}
+
 /* Makes one of the two battle views the selected and current one. */
 void BtlCam_SelectView(s32 idx) {
     gBtlCam->cur = &gBtlCam->views[idx];
@@ -784,7 +789,31 @@ s32 BtlCam_UpdateOverride(void) {
          * cut must not replace the local view. Advance shared demo animation
          * time normally, then restore the local view when it has another owner. */
         void *own;
-        s32 localActor=TagBattle_ViewActor();
+        s32 localActor;
+        {
+            extern s32 TagBattle_CouchSplit(void);
+            if(TagBattle_CouchSplit()){
+                /* Couch co-op: each half keeps its own player's camera. */
+                s32 v;
+                for(v=0;v<2;++v){
+                    s32 viewer,owner;
+                    BtlCam_SelectView(v);
+                    viewer=TagBattle_ViewActor();
+                    owner=TagBattle_CameraActor(viewer);
+                    BtlCam_SetLayout(1, 0);
+                    BtlCharApi_GetCamPose(BattleSide_GetObjId(owner),&gBtlCam->cur->pos,&gBtlCam->cur->rot);
+#ifdef PORT
+                    BtlCam_PortMods(gBtlCam->cur,v,BattleSide_GetObjId(owner));
+#endif
+                    BtlCam_BuildView(gBtlCam->cur,1);
+                }
+                if(DemoCam_IsActive())DemoCam_Update();
+                BtlCam_SelectView(0);
+                BtlCam_ApplyView(1);
+                return 0;
+            }
+        }
+        localActor=TagBattle_ViewActor();
         s32 actor,focus=localActor,priority=-1,demoOwner=-1;
         s32 defaultOwner=TagBattle_DefaultCutOwner();
         extern void *BtlChar_Get(s32 actor);

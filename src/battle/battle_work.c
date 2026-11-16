@@ -83,9 +83,17 @@ static s32 sTagViewActor,sTagLocalActor,sTagTestView=-1;
 /* Couch co-op: one CPU ally of an offline room is driven by the second controller. */
 static s32 sTagCouchActor=-1;
 s32 TagBattle_CouchActor(void){return TagBattle_Active()?sTagCouchActor:-1;}
+/* The couch pair plays on the game's own two half-screen views: view 0 is the first player's, view 1 the second's. */
+s32 TagBattle_CouchSplit(void){extern s32 Battle_IsSplitScreen(void);return TagBattle_Active()&&sTagCouchActor>=0&&Battle_IsSplitScreen();}
 s32 TagBattle_LocalActor(void){return sTagLocalActor;}
 extern s32 BtlCharApi_GetHp(s32 actor);
-s32 TagBattle_ViewActor(void){return TagBattle_Active()?(sTagTestView>=0?sTagTestView:sTagViewActor):0;}
+s32 TagBattle_ViewActor(void){
+    extern s32 BtlCam_CurIndex(void);
+    if(!TagBattle_Active())return 0;
+    if(sTagTestView>=0)return sTagTestView;
+    if(TagBattle_CouchSplit()&&BtlCam_CurIndex()==1&&BtlCharApi_GetHp(sTagCouchActor)>0)return sTagCouchActor;
+    return sTagViewActor;
+}
 s32 TagBattle_Spectating(void){return TagBattle_Active() && BtlCharApi_GetHp(sTagLocalActor)<=0 && sTagViewActor!=sTagLocalActor;}
 void TagBattle_UpdateSpectator(s32 dir){
     s32 old=sTagViewActor,i,start;
@@ -249,7 +257,7 @@ s32 TagBattle_ConfigureLocal(void) {
     for(i=0;i<count;++i)sTagTeams[i]=Port_TagTeam(i);TagBattle_ResetPairs();memset(sTagSides,0,sizeof(sTagSides));
     sTagPresentation=1;
     /* Local development match. The network battle protocol is not enabled here. */
-    BattleSetup_SetRule(0,0,sTagBgm,(getenv("BT4_RENDER_TEST")&&getenv("BT4_TAG_LONG_VIDEO"))?0:getenv("BT4_TAG_SPECTATOR_TEST")?0:getenv("BT4_TAG_LOCAL_TEST")?5:Port_TagTime(),4,sTagStage,0);
+    BattleSetup_SetRule((sTagCouchActor>=0&&!getenv("BT4_COUCH_SHARED"))?1:0,0,sTagBgm,(getenv("BT4_RENDER_TEST")&&getenv("BT4_TAG_LONG_VIDEO"))?0:getenv("BT4_TAG_SPECTATOR_TEST")?0:getenv("BT4_TAG_LOCAL_TEST")?5:Port_TagTime(),4,sTagStage,0);
     for(i=0;i<count;++i){
         s32 d=Port_TagDifficulty(i);if(d<0||d>4)d=2;
         f32 health=100.0f;
