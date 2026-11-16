@@ -578,7 +578,8 @@ s32 PauseMenu_Update(s32 pad, s32 which) {
 #ifdef PORT
     {
         extern s32 TagBattle_LocalActor(void);
-        s32 actor = TagBattle_Network() ? TagBattle_LocalActor() : pad;
+        extern s32 TagBattle_CouchActor(void);
+        s32 actor = TagBattle_Network() ? TagBattle_LocalActor() : (pad == 1 && TagBattle_CouchActor() >= 0) ? TagBattle_CouchActor() : pad;
         BtlMenu_SetScript(BtlObj_Get(BattleSide_GetObjId(actor))->skillText);
     }
 #else

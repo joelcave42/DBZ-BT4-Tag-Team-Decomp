@@ -80,6 +80,9 @@ static s32 TagBattle_FirstEnemy(s32 a){
 static s32 sTagPairs[10],sTagPairGrace[10],sTagAttackers[10],sTagDamageTargets[10],sTagPresentation,sTagReturn;
 static s32 sTagStage,sTagBgm=2;
 static s32 sTagViewActor,sTagLocalActor,sTagTestView=-1;
+/* Couch co-op: one CPU ally of an offline room is driven by the second controller. */
+static s32 sTagCouchActor=-1;
+s32 TagBattle_CouchActor(void){return TagBattle_Active()?sTagCouchActor:-1;}
 s32 TagBattle_LocalActor(void){return sTagLocalActor;}
 extern s32 BtlCharApi_GetHp(s32 actor);
 s32 TagBattle_ViewActor(void){return TagBattle_Active()?(sTagTestView>=0?sTagTestView:sTagViewActor):0;}
@@ -235,6 +238,12 @@ s32 TagBattle_ConfigureLocal(void) {
     if((!network&&Port_TagHumans()!=1) || count<2 || count>10 || !Port_TagTeamCount(0) || !Port_TagTeamCount(1))return 0;
     for(i=0;i<count;++i)if(!Port_TagConfirmed(i) || (!network && i!=Port_TagSeat() && !Port_TagCPU(i)))return 0;
     Battle_ClearWork();sTagActors=count;sTagLocal=1;sTagLocalActor=Port_TagSeat();
+    sTagCouchActor=-1;
+    if(!network){
+        extern int Port_PadPresent(int player);const char *couch=getenv("BT4_COUCH");
+        if(couch?couch[0]=='1':Port_PadPresent(1))
+            for(i=0;i<count;++i)if(i!=sTagLocalActor&&Port_TagCPU(i)&&Port_TagTeam(i)==Port_TagTeam(sTagLocalActor)){sTagCouchActor=i;break;}
+    }
     if(network){sTagStage=Port_TagStage();sTagBgm=Port_TagBgm();}
     {extern int Port_TagFreeForAll(void);sTagFreeForAll=Port_TagFreeForAll();sTagWinningActor=-1;}
     for(i=0;i<count;++i)sTagTeams[i]=Port_TagTeam(i);TagBattle_ResetPairs();memset(sTagSides,0,sizeof(sTagSides));
@@ -252,7 +261,7 @@ s32 TagBattle_ConfigureLocal(void) {
             const char *test=getenv("BT4_TAG_KO_TEST");
             if(i==3 || (i==2 && test[0]!='e'))health=1.0f;
         }
-        BattleSetup_SetSide(i,(Port_TagCPU(i)||(getenv("BT4_RENDER_TEST")&&getenv("BT4_TAG_VIDEO_TEST")))?BTL_CONTROL_CPU:BTL_CONTROL_PAD,0,1,1,1,0,NULL);
+        BattleSetup_SetSide(i,i==sTagCouchActor?BTL_CONTROL_PAD:(Port_TagCPU(i)||(getenv("BT4_RENDER_TEST")&&getenv("BT4_TAG_VIDEO_TEST")))?BTL_CONTROL_CPU:BTL_CONTROL_PAD,i==sTagCouchActor?1:0,1,1,1,0,NULL);
         BattleSetup_SetMember(i,0,Port_TagPlayerChara(i),Port_TagPlayerCostume(i),0,levels[d],health,
                              TagBattle_GetDraftItems(i,Port_TagPlayerChara(i)));
         sTagTargets[i]=TagBattle_FirstEnemy(i);
@@ -261,6 +270,7 @@ s32 TagBattle_ConfigureLocal(void) {
     if(network){extern void BattleSetup_SetOptions(s32,s32,s32,s32);BattleSetup_SetOptions(0,0,1,1);}
     BattleSetup_Finish();
     fprintf(stderr,"tag local: configured %d actors, teams=%d:%d humans=%d local-actor=%d independent CPU difficulty\n",count,TagBattle_TeamCount(0),TagBattle_TeamCount(1),Port_TagHumans(),sTagLocalActor);
+    fprintf(stderr,"tag couch: second-controller actor=%d\n",sTagCouchActor);
     return 1;
 }
 s32 TagBattle_Count(void) { return sTagActors; }
@@ -287,7 +297,7 @@ void TagBattle_Prepare(void) {
     if(getenv("BT4_RENDER_TEST")&&getenv("BT4_TAG_CAMERA_VIEW")){s32 a=atoi(getenv("BT4_TAG_CAMERA_VIEW"));sTagTestView=a>=0&&a<sTagActors?a:-1;}
     if(sTagActors>2)fprintf(stderr,"tag actors: loading %d independent actors\n",sTagActors);
 }
-void TagBattle_End(void) { extern void Port_ActorAdxStopAll(void);Port_ActorAdxStopAll();extern void TagClash_Reset(void);TagClash_Reset();sTagFreeForAll=0;sTagWinningActor=-1;sTagActors=2;sTagLocal=0;sTagTestView=-1;memset(sTagSides,0,sizeof(sTagSides)); }
+void TagBattle_End(void) { extern void Port_ActorAdxStopAll(void);Port_ActorAdxStopAll();extern void TagClash_Reset(void);TagClash_Reset();sTagFreeForAll=0;sTagWinningActor=-1;sTagActors=2;sTagLocal=0;sTagTestView=-1;sTagCouchActor=-1;memset(sTagSides,0,sizeof(sTagSides)); }
 
 /* Returns the battle's shared state. */
 BattleWork *Battle_GetWork(void) {

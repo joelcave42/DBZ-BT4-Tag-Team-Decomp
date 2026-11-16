@@ -589,6 +589,15 @@ static SDL_Gamepad *pad_of(int player) {
     return NULL;
 }
 
+/* 1 when a physical controller is assigned to that player (couch co-op asks for player 2). */
+int Port_PadPresent(int player) {
+    if (player < 0 || player > 1) {
+        return 0;
+    }
+    pthread_once(&sLoadOnce, load);
+    return pad_of(player) != NULL;
+}
+
 /* BT3_PAD="frame:button,frame:button,...": scripted presses for player 1, each held for 4 frames from that frame
    (frame = the renderer's frame counter). Buttons: start select up down left right cross circle square triangle
    l1 r1 l2 r2. For tests without a person at the keyboard. */
