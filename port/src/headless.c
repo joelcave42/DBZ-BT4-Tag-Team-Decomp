@@ -508,6 +508,11 @@ void Port_Trace(unsigned vblanks) {
             for(a=0;a<count;++a){int object=BattleSide_GetObjId(a);BtlCharApi_GetBasePos(object,positions+a*4);alive[a]=BtlCharApi_GetHp(object)>0;}
         }
         PortVoice_World(mode,listener,count,positions);
+        {
+            extern void PortAudio_SecondListener(int actor);
+            extern int TagBattle_CouchSplit(void),TagBattle_CouchActor(void);
+            PortAudio_SecondListener(mode==2&&TagBattle_CouchSplit()?TagBattle_CouchActor():-1);
+        }
         PortAudio_World(mode==2,listener,count,positions,alive);
     }
     if ((getenv("BT4_TAG_ACTOR_TEST") != NULL || getenv("BT4_TAG_LOCAL_TEST") != NULL) && gBtlSeq != NULL && gBtlSeq->state >= 2 && vblanks % 120 == 0) {
