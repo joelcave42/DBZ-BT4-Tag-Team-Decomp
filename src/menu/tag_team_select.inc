@@ -18,6 +18,7 @@ extern int Port_TagPlayerChara(int seat), Port_TagPlayerCostume(int seat), Port_
 extern const char *Port_TagPlayerName(int seat), *Port_TagError(void);
 
 extern int Port_TagFreeForAll(void);
+extern s32 TagBattle_CouchSeat(void);
 extern int Port_TagTeam(int seat),Port_TagTeamIndex(int seat),Port_TagTeamCount(int team);
 static s32 sTagPage[2]={-1,-1};
 static void TeamSel_TagSetRoster(void){
@@ -210,7 +211,7 @@ static void TeamSel_TagCaption(s32 seat,s32 pending){
         Ps_Copy(line,(char*)PortOnline_Text(Port_TagFreeForAll()?"Fighters: ":team?"RED TEAM: ":"BLUE TEAM: "),128);
         if(turn<0)Ps_Cat(line,(char *)PortOnline_Text("READY"),128);else Ps_Cat(line,(char*)Port_TagPlayerName(turn),128);
         {char pageText[40];sprintf(pageText," | %d-%d/%d",sTagPage[team]*5+1,(sTagPage[team]+1)*5<Port_TagTeamCount(team)?(sTagPage[team]+1)*5:Port_TagTeamCount(team),Port_TagTeamCount(team));Ps_Cat(line,pageText,128);}
-        if(turn==seat)Ps_Cat(line,pending?(char *)PortOnline_Text(" | CONFIRMING"):Port_TagCPU(seat)?(char *)PortOnline_Text(" | SELECT CPU"):(char *)PortOnline_Text(" | YOUR TURN"),128);
+        if(turn==seat)Ps_Cat(line,pending?(char *)PortOnline_Text(" | CONFIRMING"):(seat==TagBattle_CouchSeat())?" | PLAYER 2 PICKS":Port_TagCPU(seat)?(char *)PortOnline_Text(" | SELECT CPU"):(char *)PortOnline_Text(" | YOUR TURN"),128);
         Ps_Text(team?273:20+left,433,line,.43f,217-left,team?1:3);
     }
     Ps_Align(1);Ps_Text(256,412,"TRIANGLE: BACK",.42f,180,0);Ps_Align(0);
@@ -297,7 +298,8 @@ s32 TeamSel_TagRun(s32 section){
         savedPads[0]=gPad[0];savedPads[1]=gPad[1];
         memset(&gPad[0].held,0,sizeof(Pad)-0x148);memset(&gPad[1].held,0,sizeof(Pad)-0x148);
         if(!exit && ownTurn){
-            gPad[team]=savedPads[0];
+            {extern s32 TagBattle_CouchSeat(void);
+             gPad[team]=savedPads[(seat==TagBattle_CouchSeat())?1:0];}
             if(getenv("BT4_TAG_DRAFT_TEST") && !TagSelectTest_HoldSeat(seat) && ++testFrames%40==0){gPad[team].gamePressed=PADG_CROSS;gPad[team].gameHeld=PADG_CROSS;gPad[team].gameRepeat=PADG_CROSS;}
             TagLongVideo_Input(seat);
             /* Local play uses the native three saved sets. Network rooms

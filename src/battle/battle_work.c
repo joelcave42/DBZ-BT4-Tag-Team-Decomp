@@ -246,6 +246,15 @@ s32 TagBattle_TargetDirection(s32 actor,s32 direction) {
     return chosen>=0?TagBattle_SetTarget(actor,chosen):0;
 }
 #include "tag_team_target_audit.inc"
+/* The seat the second controller plays in an offline room: the first CPU ally of the local player, or -1. */
+s32 TagBattle_CouchSeat(void){
+    extern int Port_TagNetwork(void),Port_TagSeat(void),Port_TagCapacity(void),Port_TagCPU(int seat),Port_TagTeam(int seat);
+    extern int Port_PadPresent(int player);
+    const char *couch=getenv("BT4_COUCH");s32 i,local=Port_TagSeat(),count=Port_TagCapacity();
+    if(Port_TagNetwork()||local<0||!(couch?couch[0]=='1':Port_PadPresent(1)))return -1;
+    for(i=0;i<count&&i<10;++i)if(i!=local&&Port_TagCPU(i)&&Port_TagTeam(i)==Port_TagTeam(local))return i;
+    return -1;
+}
 s32 TagBattle_ConfigureLocal(void) {
     extern int Port_TagHumans(void),Port_TagCapacity(void),Port_TagConfirmed(int seat),Port_TagCPU(int seat);
     extern int Port_TagDifficulty(int seat),Port_TagPlayerChara(int seat),Port_TagPlayerCostume(int seat),Port_TagTime(void);
