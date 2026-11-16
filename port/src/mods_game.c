@@ -45,7 +45,15 @@ extern int PortSpectator_Mode(void);
 int PortMods_ViewActor(int side) {
     int own,target,count;
     if(!TagBattle_Active())return side;
-    count=TagBattle_Count();own=TagBattle_ViewActor();
+    count=TagBattle_Count();
+    {
+        extern int TagBattle_CouchSplit(void),TagBattle_GaugeActor(int side);
+        if(TagBattle_CouchSplit()){
+            int actor=TagBattle_GaugeActor(side?1:0);
+            return actor>=0&&actor<count?actor:side;
+        }
+    }
+    own=TagBattle_ViewActor();
     if(own<0 || own>=count)own=0;
     target=TagBattle_Target(own);
     return side==0?own:target>=0&&target<count?target:own;

@@ -795,7 +795,8 @@ s32 BtlCam_UpdateOverride(void) {
             extern void TagBattle_SetViewSlot(s32 slot);
             TagBattle_SetViewSlot(0);
             /* Intros, finishes and results keep the single full-screen view. */
-            if(TagBattle_CouchSplit()&&BtlSeq_IsFighting()){
+            (void)BtlSeq_IsFighting;
+            if(TagBattle_CouchSplit()){
                 /* Couch co-op: each half keeps its own player's camera. */
                 s32 v;
                 for(v=0;v<2;++v){
