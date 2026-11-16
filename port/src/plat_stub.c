@@ -77,6 +77,8 @@ static unsigned long long now_ns(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (unsigned long long)ts.tv_sec * 1000000000ull + (unsigned long long)ts.tv_nsec;
 }
+/* (for the couch co-op timing lines of src/battle/battle.c) */
+unsigned long long Port_PerfNs(void) { return now_ns(); }
 
 /* (real time, not game state: PORT_HOST) */
 PORT_HOST static unsigned long long sPacePrev = 0, sPaceMin = ~0ull, sPaceMax = 0;
@@ -142,7 +144,7 @@ void Port_GameSpeedSet(int percent) {
 }
 int Port_SpeedMilli(void) {
     extern int Port_TagBattleRenderActive(void);
-    if(Port_TagBattleRenderActive())return 1140;
+    {int tag=Port_TagBattleRenderActive();if(tag==1)return 1140;if(tag==2)return Port_GameSpeed()*10;}
     return Port_NetSession() || Port_NetActive() ? Port_NetSpeedMilli() : Port_GameSpeed() * 10;
 }
 /* BT3_LAG_LOG=1: when things happen in a tick, in microseconds since the start: V a vertical blank (after its wait),

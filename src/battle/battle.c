@@ -172,7 +172,10 @@ s32 Battle_Restart(void) {
 /* Loads the battle data, creates every battle subsystem, then starts the first match. */
 s32 Battle_Init(void) {
     DevRules_Reset();
-    {extern void Port_TagBattleRenderSet(s32);Port_TagBattleRenderSet(TagBattle_Active());}
+    /* Couch co-op (two local players, split screen) is not kept in step with anyone: it runs at the game's own
+       pace, not the online 114%, which also left the frame 14% less time and raised the pitch of every sound. */
+    {extern void Port_TagBattleRenderSet(s32);extern s32 TagBattle_CouchSplit(void);
+     Port_TagBattleRenderSet(TagBattle_Active()?(TagBattle_CouchSplit()?2:1):0);}
     Battle_Load();
     StgFx_Init();
     StgModel_InitStage();
@@ -376,8 +379,44 @@ s32 Battle_DrawSplit(void) {
     return 0;
 }
 
+/* Couch co-op: where a split-screen tick's time goes, written to the log every 300 ticks. sim = the game's
+   update, draw = building the picture lists, end = handing them over and waiting for the blanks, idle = the part
+   of that spent waiting (time to spare), tick = start to start. slow = ticks longer than two blanks + 2 ms. */
+typedef struct { unsigned long long sum[4], max[4], last; unsigned n, slow, skipped0; } CouchPerf;
+static CouchPerf sCouchPerf;
+static void CouchPerf_Tick(unsigned long long a, unsigned long long b, unsigned long long c, unsigned long long d, unsigned long long slept) {
+    extern unsigned long long Port_BlankNs(void);
+    extern void GsDraw_PerfStats(unsigned *pictureUs, unsigned *cap, unsigned *skipped);
+    CouchPerf *p = &sCouchPerf;
+    unsigned long long v[4];
+    s32 k;
+    unsigned pic, cap, skipped;
+    v[0] = b - a; v[1] = c - b; v[2] = d - c; v[3] = p->last ? d - p->last : 0;
+    p->last = d;
+    if (v[3] == 0) return;
+    if (p->n == 0) { GsDraw_PerfStats(&pic, &cap, &skipped); p->skipped0 = skipped; }
+    for (k = 0; k < 4; k++) { p->sum[k] += v[k]; if (v[k] > p->max[k]) p->max[k] = v[k]; }
+    p->slow += v[3] > 2ull * Port_BlankNs() + 2000000ull;
+    (void)slept;
+    if (++p->n >= 300) {
+        GsDraw_PerfStats(&pic, &cap, &skipped);
+        fprintf(stderr, "couch perf: ticks=%u slow=%u sim=%lu/%lu draw=%lu/%lu end=%lu/%lu tick=%lu/%lu us (avg/max) picture=%u us pictures-per-tick=%u undrawn=%u\n",
+                p->n, p->slow,
+                (unsigned long)(p->sum[0] / p->n / 1000ull), (unsigned long)(p->max[0] / 1000ull),
+                (unsigned long)(p->sum[1] / p->n / 1000ull), (unsigned long)(p->max[1] / 1000ull),
+                (unsigned long)(p->sum[2] / p->n / 1000ull), (unsigned long)(p->max[2] / 1000ull),
+                (unsigned long)(p->sum[3] / p->n / 1000ull), (unsigned long)(p->max[3] / 1000ull),
+                pic, cap, skipped - p->skipped0);
+        for (k = 0; k < 4; k++) { p->sum[k] = 0; p->max[k] = 0; }
+        p->n = p->slow = 0;
+    }
+}
+
 /* Runs battle frames until the sequence reports the end; restarts the match when BATTLE_FLAG_RESTART is raised. */
 void Battle_Loop(void) {
+    extern unsigned long long Port_PerfNs(void);
+    extern s32 TagBattle_CouchSplit(void);
+    unsigned long long perfA = 0, perfB = 0, perfC = 0;
     s32 draw;
     s32 done=0;
 
@@ -402,6 +441,7 @@ void Battle_Loop(void) {
                them on the shared simulation frame, once, not on every poll. */
             Job_Run();
         }
+        perfA = Port_PerfNs();
         Gfx_BeginFrame();
         if(DevRules_Online()){
             if(!TagBattle_Network())Pad_Update();
@@ -437,6 +477,7 @@ void Battle_Loop(void) {
         BtlChars_SampleInput();
         draw = Battle_Update();
         done = BtlGame_Update();
+        perfB = Port_PerfNs();
         if(TagBattle_Network())TagOnline_Trace();
         if (Battle_IsSplitScreen() && draw) {
             Battle_DrawSplit();
@@ -444,9 +485,12 @@ void Battle_Loop(void) {
             Battle_Draw();
         }
         TagBattle_ResultDraw();
+        perfC = Port_PerfNs();
         DevPause_End(devPauseOwned);
         Gfx_EndFrame(2);
         Dma_Flush();
+        if (TagBattle_CouchSplit()) CouchPerf_Tick(perfA, perfB, perfC, Port_PerfNs(), 0);
+        else sCouchPerf.last = 0;
     } while (!done);
 }
 

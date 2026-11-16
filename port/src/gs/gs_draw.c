@@ -5524,10 +5524,11 @@ static void interp_cost(uint64_t ns) {
     }
     /* down when the pictures take more than 70% of the tick (the rest is the game's own work), up again when one
        step more would take less than half of it */
-    while (sInterpCap > 1 && sInterpCostNs * (uint64_t)sInterpCap > 33366700ull * 7 / 10) {
+    uint64_t tick = 2ull * Port_BlankNs(); /* 33.4 ms at the game's own pace, 29.3 ms at the online 114% */
+    while (sInterpCap > 1 && sInterpCostNs * (uint64_t)sInterpCap > tick * 7 / 10) {
         sInterpCap /= 2;
     }
-    if (sInterpCap == was && sInterpCap < 8 && sInterpCostNs * (uint64_t)sInterpCap * 2 < 33366700ull / 2) {
+    if (sInterpCap == was && sInterpCap < 8 && sInterpCostNs * (uint64_t)sInterpCap * 2 < tick / 2) {
         sInterpCap *= 2;
     }
     if (sInterpCap < was && sInterpCap < interp_steps() && !said) {
@@ -5741,6 +5742,7 @@ void GsGpu_InterpFlush(void) { /* (the name Port_VBlank knew it by) */
  * Only helps where the showing is what takes the time (a weak graphics chip), not the computing. */
 int gsSkipFrame;
 static int sSkipOn = -1, sSkipRun;
+static unsigned sSkippedTotal; /* (couch co-op timing lines) */
 static unsigned sSkipped; /* (BT3_GS_VERBOSE) */
 
 int GsDraw_FrameSkip(void) {
@@ -5777,11 +5779,19 @@ static void skip_decide(void) {
     (void)gPortNetWindowClose;
     sSkipRun = skip ? sSkipRun + 1 : 0;
     sSkipped += (unsigned)skip;
+    sSkippedTotal += (unsigned)skip;
     gsSkipFrame = skip;
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 120 == 0 && sSkipped != 0) {
         fprintf(stderr, "skip: %u ticks were not shown in the last 120 pictures (the game was %d.%d ms behind just now)\n", sSkipped, behind / 1000, behind / 100 % 10);
         sSkipped = 0;
     }
+}
+
+/* For the couch co-op timing lines: what a picture costs, how many a tick may have, ticks left undrawn so far. */
+void GsDraw_PerfStats(unsigned *pictureUs, unsigned *cap, unsigned *skipped) {
+    *pictureUs = (unsigned)(sInterpCostNs / 1000ull);
+    *cap = (unsigned)sInterpCap;
+    *skipped = sSkippedTotal;
 }
 
 void GsGpu_FrameEnd(void) {

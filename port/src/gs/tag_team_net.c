@@ -504,7 +504,7 @@ int Port_TagJoinCode(const char *code){
 }
 
 static SDL_AtomicInt sTagRenderActive;
-void Port_TagBattleRenderSet(int active){SDL_SetAtomicInt(&sTagRenderActive,active!=0);}
+void Port_TagBattleRenderSet(int active){SDL_SetAtomicInt(&sTagRenderActive,active<0?0:active>2?1:active);}
 int Port_TagBattleRenderActive(void){return SDL_GetAtomicInt(&sTagRenderActive);}
 
 /* Cached verification of the compatible base data, independent of release labels. */
