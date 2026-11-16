@@ -374,7 +374,8 @@ void Hud_PreUpdate(void) {
     }
     for (side = 0; side < 2; side++) {
         extern s32 TagBattle_ViewActor(void);
-        s32 actor=TagBattle_Active()?(side?TagBattle_Target(TagBattle_ViewActor()):TagBattle_ViewActor()):side;
+        extern s32 TagBattle_GaugeActor(s32 side);
+        s32 actor=TagBattle_Active()?TagBattle_GaugeActor(side):side;
         s32 v;
         s32 i;
         s32 mask;

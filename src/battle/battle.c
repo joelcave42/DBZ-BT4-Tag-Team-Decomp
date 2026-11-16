@@ -244,10 +244,13 @@ s32 Battle_Update(void) {
     BtlObj_UpdateAll();
     if (Battle_IsSplitScreen() && !singleView) {
         for (i = 0; i < 2; i++) {
+            extern void TagBattle_SetViewSlot(s32 slot);
             BtlCam_SelectView(i);
+            TagBattle_SetViewSlot(i);
             BtlCam_ApplyView(0);
             BtlObj_UpdateVisibility(i);
         }
+        { extern void TagBattle_SetViewSlot(s32 slot); TagBattle_SetViewSlot(0); }
         BtlObj_FinishVisibility(1);
     } else {
         BtlObj_UpdateVisibility(0);
@@ -318,11 +321,14 @@ s32 Battle_DrawSplit(void) {
     Dbg_ProfMark(gBattleProf);
     Gfx_MarkPass(1);
     for (i = 0; i < 2; i++) {
+        extern void TagBattle_SetViewSlot(s32 slot);
         BtlCam_SelectView(i);
+        TagBattle_SetViewSlot(i);
         BtlCam_ApplyView(1);
         StgModel_Cull(gBtlCamView);
         StgModel_Draw(gBtlCamView);
     }
+    { extern void TagBattle_SetViewSlot(s32 slot); TagBattle_SetViewSlot(0); }
     Dbg_ProfColor(gBattleProf, 0x80FF4040);
     Dbg_ProfMark(gBattleProf);
     Gfx_MarkPass(3);
@@ -340,11 +346,14 @@ s32 Battle_DrawSplit(void) {
     Gfx_MarkPass(4);
     Gfx_AddDefaultEnv();
     for (i = 0; i < 2; i++) {
+        extern void TagBattle_SetViewSlot(s32 slot);
         BtlCam_SelectView(i);
+        TagBattle_SetViewSlot(i);
         BtlCam_ApplyView(1);
         BtlScene_Draw(i == 0);
         Ot_Draw();
     }
+    { extern void TagBattle_SetViewSlot(s32 slot); TagBattle_SetViewSlot(0); }
     Dbg_ProfColor(gBattleProf, 0x804040FF);
     Dbg_ProfMark(gBattleProf);
     Gfx_MarkPass(3);

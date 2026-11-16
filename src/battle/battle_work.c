@@ -84,6 +84,9 @@ static s32 sTagViewActor,sTagLocalActor,sTagTestView=-1;
 static s32 sTagCouchActor=-1;
 s32 TagBattle_CouchActor(void){return TagBattle_Active()?sTagCouchActor:-1;}
 /* The couch pair plays on the game's own two half-screen views: view 0 is the first player's, view 1 the second's. */
+/* Which half-screen view the presentation code is working for (0 the first player's, 1 the second's). */
+static s32 sTagViewSlot;
+void TagBattle_SetViewSlot(s32 slot){sTagViewSlot=slot==1;}
 s32 TagBattle_CouchSplit(void){extern s32 Battle_IsSplitScreen(void);return TagBattle_Active()&&sTagCouchActor>=0&&Battle_IsSplitScreen();}
 s32 TagBattle_LocalActor(void){return sTagLocalActor;}
 extern s32 BtlCharApi_GetHp(s32 actor);
@@ -91,8 +94,16 @@ s32 TagBattle_ViewActor(void){
     extern s32 BtlCam_CurIndex(void);
     if(!TagBattle_Active())return 0;
     if(sTagTestView>=0)return sTagTestView;
-    if(TagBattle_CouchSplit()&&BtlCam_CurIndex()==1&&BtlCharApi_GetHp(sTagCouchActor)>0)return sTagCouchActor;
+    if(TagBattle_CouchSplit()&&sTagViewSlot==1&&BtlCharApi_GetHp(sTagCouchActor)>0)return sTagCouchActor;
     return sTagViewActor;
+}
+/* The fighter a main gauge shows: the viewer and its target, or on the couch split the two players. */
+s32 TagBattle_Target(s32 actor);
+s32 TagBattle_GaugeActor(s32 side){
+    s32 view;
+    if(TagBattle_CouchSplit())return side?sTagCouchActor:sTagViewActor;
+    view=TagBattle_ViewActor();
+    return side?TagBattle_Target(view):view;
 }
 s32 TagBattle_Spectating(void){return TagBattle_Active() && BtlCharApi_GetHp(sTagLocalActor)<=0 && sTagViewActor!=sTagLocalActor;}
 void TagBattle_UpdateSpectator(s32 dir){
@@ -305,7 +316,7 @@ void TagBattle_Prepare(void) {
     if(getenv("BT4_RENDER_TEST")&&getenv("BT4_TAG_CAMERA_VIEW")){s32 a=atoi(getenv("BT4_TAG_CAMERA_VIEW"));sTagTestView=a>=0&&a<sTagActors?a:-1;}
     if(sTagActors>2)fprintf(stderr,"tag actors: loading %d independent actors\n",sTagActors);
 }
-void TagBattle_End(void) { extern void Port_ActorAdxStopAll(void);Port_ActorAdxStopAll();extern void TagClash_Reset(void);TagClash_Reset();sTagFreeForAll=0;sTagWinningActor=-1;sTagActors=2;sTagLocal=0;sTagTestView=-1;sTagCouchActor=-1;memset(sTagSides,0,sizeof(sTagSides)); }
+void TagBattle_End(void) { extern void Port_ActorAdxStopAll(void);Port_ActorAdxStopAll();extern void TagClash_Reset(void);TagClash_Reset();sTagFreeForAll=0;sTagWinningActor=-1;sTagActors=2;sTagLocal=0;sTagTestView=-1;sTagCouchActor=-1;sTagViewSlot=0;memset(sTagSides,0,sizeof(sTagSides)); }
 
 /* Returns the battle's shared state. */
 BattleWork *Battle_GetWork(void) {

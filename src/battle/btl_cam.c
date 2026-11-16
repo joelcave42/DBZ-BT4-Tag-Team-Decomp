@@ -791,13 +791,17 @@ s32 BtlCam_UpdateOverride(void) {
         void *own;
         s32 localActor;
         {
-            extern s32 TagBattle_CouchSplit(void);
-            if(TagBattle_CouchSplit()){
+            extern s32 TagBattle_CouchSplit(void),BtlSeq_IsFighting(void);
+            extern void TagBattle_SetViewSlot(s32 slot);
+            TagBattle_SetViewSlot(0);
+            /* Intros, finishes and results keep the single full-screen view. */
+            if(TagBattle_CouchSplit()&&BtlSeq_IsFighting()){
                 /* Couch co-op: each half keeps its own player's camera. */
                 s32 v;
                 for(v=0;v<2;++v){
                     s32 viewer,owner;
                     BtlCam_SelectView(v);
+                    TagBattle_SetViewSlot(v);
                     viewer=TagBattle_ViewActor();
                     owner=TagBattle_CameraActor(viewer);
                     BtlCam_SetLayout(1, 0);
@@ -808,6 +812,7 @@ s32 BtlCam_UpdateOverride(void) {
                     BtlCam_BuildView(gBtlCam->cur,1);
                 }
                 if(DemoCam_IsActive())DemoCam_Update();
+                TagBattle_SetViewSlot(0);
                 BtlCam_SelectView(0);
                 BtlCam_ApplyView(1);
                 return 0;
@@ -922,6 +927,12 @@ void TagBattle_HudCaptureView(void *ptr) {
     if(getenv("BT4_TAG_HUD_LOG")){
         extern void Port_TagHudView(f32 *v,f32 *p,f32 *nearZ);
         Port_TagHudView(sTagHudView,sTagHudProjection,&sTagHudNear);
+    }
+}
+/* The same snapshot taken from one of the two battle views (couch split: one overlay per half). */
+void TagBattle_HudCaptureSlot(s32 slot) {
+    if (gBtlCam != NULL) {
+        TagBattle_HudCaptureView(&gBtlCam->views[slot == 1].view);
     }
 }
 s32 TagBattle_HudCamera(f32 *basis) { return sTagHudViewValid && ThBasis(sTagHudView,basis); }
