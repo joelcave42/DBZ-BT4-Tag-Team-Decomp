@@ -379,11 +379,15 @@ static s32 TagBattle_AllyFocusAvailable(s32 actor,s32 ally){
         (BtlCharApi_GetHp(ally)>0||TagRevive_Hud(ally,&progress,&total,&helpers));
 }
 
+/* Local split-screen play keeps the classic lock-on: target switching only ever picks enemies. The ally-focus and
+   free camera modes (Select, L3 with Charge or Lock-on) left a player locked onto a teammate with no specials. */
 s32 TagBattle_CameraMode(s32 actor){
+    if(TagBattle_SplitLocal())return 0;
     return TagBattle_DevCombatActive()&&actor>=0&&actor<sTagActors?sTagCameraMode[actor]:0;
 }
 
 s32 TagBattle_Focus(s32 actor){
+    if(TagBattle_SplitLocal())return -1;
     if(!TagBattle_DevCombatActive()||actor<0||actor>=sTagActors||
        sTagPairs[actor]>=0||sTagCounterTarget[actor]>=0)return -1;
     if(sTagCameraMode[actor]==0)return -1;
@@ -397,6 +401,7 @@ static void TagBattle_SelectCamera(s32 actor,s32 mode){
     extern void BtlCharApi_GetBasePos(s32,Vec4 *);
     extern s32 TagRevive_Hud(s32,s32 *,s32 *,s32 *);
     if(!TagBattle_DevCombatActive()||actor<0||actor>=sTagActors||sTagPairs[actor]>=0||sTagCounterTarget[actor]>=0)return;
+    if(TagBattle_SplitLocal())mode=0;
     sTagCameraMode[actor]=mode;
     sTagFocus[actor]=-1;
     if(mode!=1)return;
