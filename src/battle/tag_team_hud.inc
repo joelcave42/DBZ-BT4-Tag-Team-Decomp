@@ -374,6 +374,22 @@ static void TagHud_Radar(s32 view,s32 count,f32 right){
         TagHud_Arrow(cx+dx*PS_UNIT_X,cy+dy,0,-1,i==view?2.7f:2.1f,col);
     }
 }
+/* Split screen: the health of the fighter this half's player targets. Drawn with the overlay's own shapes, not
+   the game's gauge sprites, so it stays visible when a HUD mod (Modern HUD) hides the native gauges. */
+static void TagHud_TargetBar(s32 foe,f32 cx,f32 y){
+    char text[24];
+    s32 hp=BtlCharApi_GetHp(foe),max=BtlCharApi_GetHpMax(foe);
+    f32 ratio=max>0?(f32)hp/(f32)max:0.0f,w=150.0f;
+    u32 ink=Ps_Rgba(6,12,20,0x60);
+    u32 col=ratio>.5f?TagHud_Color(255,196,70):ratio>.25f?TagHud_Color(255,130,50):TagHud_Color(255,70,60);
+    if(ratio<0)ratio=0;
+    Port_GsMarker(0x73);Port_GsMarker(0x75);Port_GsMarker(0x77); /* outside any hidden native scope */
+    Ps_Rect(cx-w*.5f-4,y-15,cx+w*.5f+4,y+10,ink,ink);
+    TagHud_Label(cx-w*.5f,y-14,"TARGET",.38f,70,TagHud_Color(255,214,100));
+    snprintf(text,sizeof(text),"%d%%",(s32)(ratio*100.0f+.5f));
+    Ps_Align(2);TagHud_Label(cx+w*.5f,y-14,text,.38f,50,TagHud_Color(238,248,251));Ps_Align(0);
+    TagHud_Fill(cx-w*.5f,y,w,6,ratio,col);
+}
 static void TagHud_DevLayout(s32 view,s32 target,s32 count,s32 split){
     f32 left=Ps_Left(),right=512-left;
     if(split){
@@ -385,7 +401,7 @@ static void TagHud_DevLayout(s32 view,s32 target,s32 count,s32 split){
             if(BtlSeq_IsFighting()){
                 const s32 foe=TagBattle_Target(actor);
                 if(foe>=0&&foe<count&&foe!=actor&&!TagBattle_Allied(foe,actor)&&!TagFusion_Absent(foe))
-                    TagHud_NativeGauge(foe,player?264:248,40,.46f,0,player==0);
+                    TagHud_TargetBar(foe,player?(256+512-left)*.5f:(left+256)*.5f,414);
             }
             if(BtlSeq_IsFighting())TagHud_FloatingAllies(player,actor,count);
             if (!BtlSeq_IsFighting()) continue;
