@@ -5,6 +5,22 @@ static s32 TagAudit_CameraPolicy(void){
     sTagAuditChecks=sTagAuditFailures=0;
     TagAudit_Clear();TagBattle_ResetPairs();
     for(i=0;i<BtlChar_GetCount();++i)BtlChar_Get(i)->action=0xB;
+    {
+        extern void TagBattle_ChangeFocus(s32,s32),TagBattle_FocusEnemy(s32);
+        extern void BtlChar_ToggleHeldFlag(BtlMgrChr *,s32);
+        TagBattle_ChangeFocus(0,0);
+        for(k=0;k<120;++k){
+            BtlChar_UpdateLockOn(BtlChar_Get(0));
+            BtlChar_SetHeldFlag(BtlChar_Get(0),5);
+            BtlChar_SetFlag(BtlChar_Get(0),5);
+            BtlChar_ToggleHeldFlag(BtlChar_Get(0),5);
+            TagAudit_Check("free_focus_rejects_every_lock_on_writer",!BtlChar_TestFlag(BtlChar_Get(0),5));
+        }
+        TagBattle_ChangeFocus(0,1);BtlChar_SetHeldFlag(BtlChar_Get(0),5);
+        TagAudit_Check("ally_focus_does_not_reacquire_enemy",!BtlChar_TestFlag(BtlChar_Get(0),5));
+        TagBattle_FocusEnemy(0);BtlChar_SetHeldFlag(BtlChar_Get(0),5);
+        TagAudit_Check("enemy_focus_restores_normal_lock_on",BtlChar_TestFlag(BtlChar_Get(0),5));
+    }
     grabTarget=TagBattle_Target(0);BtlChar_Get(0)->action=0xB4;
     TagBattle_CycleTarget(0);
     TagAudit_Check("grab_approach_keeps_original_target",TagBattle_Target(0)==grabTarget&&!TagBattle_SetTarget(0,3));
@@ -19,6 +35,15 @@ static s32 TagAudit_CameraPolicy(void){
     TagAudit_Check("orphaned_victim_does_not_keep_pair_locked",TagBattle_Pair(0)<0&&TagBattle_Pair(1)<0);
     TagAudit_Clear();TagBattle_ResetPairs();
     for(i=0;i<BtlChar_GetCount();++i)BtlChar_Get(i)->action=0xB;
+    for(s32 action=0xEC;action<=0xF8;++action){
+        BtlChar_Get(0)->action=action;
+        BtlChar_SetFlag(BtlChar_Get(0),0x125);
+        BtlChars_UpdateFreeze();
+        TagAudit_Check("transformation_keeps_every_other_fighter_active",TagBattle_Preparing(0));
+        for(i=1;i<BtlChar_GetCount();++i)TagAudit_Check("transformation_does_not_freeze_opponents",!BtlChar_Get(i)->freeze);
+    }
+    BtlChar_Get(0)->action=0xB;
+    TagAudit_Clear();
     BtlChar_Get(0)->action=0x105;BtlSuper_RequestHitStop(BtlChar_Get(0),0);BtlChars_UpdateFreeze();
     TagAudit_Check("shared_preparation_owner",TagBattle_DefaultCutOwner()==0);
     for(i=0;i<BtlChar_GetCount();++i){

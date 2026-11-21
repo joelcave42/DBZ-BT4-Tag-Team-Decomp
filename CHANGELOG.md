@@ -1,3 +1,275 @@
+# BT4decomp 0.1.39.6 R1 1.17
+
+- Corrected Cell’s balance adjustment. Perfect Cell’s Ki blasts deal 70% less damage. Super Perfect Cell’s original Ki blast damage has been restored.
+
+Update from the game menu. Everyone in the room should use the same version.
+
+<!-- bt4-update:en
+- Corrected Cell’s balance adjustment. Perfect Cell’s Ki blasts deal 70% less damage. Super Perfect Cell’s original Ki blast damage has been restored.
+-->
+<!-- bt4-update:es
+- Corregimos el balance de Cell. Las ráfagas de ki de Cell Perfecto hacen un 70 % menos de daño. Cell Súper Perfecto recupera su daño original.
+-->
+<!-- bt4-update:pt
+- Corrigimos o balanceamento de Cell. As rajadas de ki de Cell Perfeito causam 70% menos dano. Super Cell Perfeito recupera seu dano original.
+-->
+
+# BT4decomp 0.1.39.6 R1 1.16
+
+- Adjusted damage, Ki costs, and defensive abilities for several fighters. Gamma 2’s first super takes longer to fire, and Broly and giant fighters lose their innate armor.
+- Random picks now reveal your fighter before stage selection in online solo battles.
+- Browse public rooms and join private rooms by code from the same menu.
+- Fixed a loop that could send spectators back and forth between the lobby and an ongoing match.
+- Automatic input delay now adapts to ping and the room’s rollback setting.
+
+Update from the game menu. Everyone in the room should use the same version.
+
+<!-- bt4-update:en
+- Adjusted damage, Ki costs, and defensive abilities for several fighters. Gamma 2’s first super takes longer to fire, and Broly and giant fighters lose their innate armor.
+- Random picks now reveal your fighter before stage selection in online solo battles.
+- Browse public rooms and join private rooms by code from the same menu.
+- Fixed a loop that could send spectators back and forth between the lobby and an ongoing match.
+- Automatic input delay now adapts to ping and the room’s rollback setting.
+-->
+<!-- bt4-update:es
+- Ajustamos el daño, los costes de ki y las habilidades defensivas de varios luchadores. La primera técnica de Gamma 2 tarda más en salir, y los Broly y los gigantes pierden su armadura innata.
+- En los duelos online, la selección aleatoria muestra qué luchador te tocó antes de elegir el escenario.
+- Consulta las salas públicas y entra a salas privadas por código desde el mismo menú.
+- Corregimos el bucle que podía hacer rebotar a los espectadores entre la sala y un combate en curso.
+- El retraso automático se ajusta al ping y al rollback de la sala.
+-->
+<!-- bt4-update:pt
+- Ajustamos o dano, os custos de ki e as habilidades defensivas de vários lutadores. O primeiro super de Gamma 2 demora mais para sair, e Broly e os gigantes perdem a armadura inata.
+- Nos duelos online, a seleção aleatória revela seu lutador antes da escolha da arena.
+- Veja as salas públicas e entre em salas privadas por código pelo mesmo menu.
+- Corrigimos o retorno repetido entre a sala e a luta ao entrar como espectador.
+- O atraso automático é ajustado ao ping e ao rollback da sala.
+-->
+
+# BT4decomp 0.1.39.6 R1 1.8
+
+- Restored the original arena boundaries.
+
+Update from the game menu. Everyone in the room should use the same version.
+
+<!-- bt4-update:en
+- Restored the original arena boundaries.
+-->
+<!-- bt4-update:es
+- Se restauraron los límites originales de los escenarios.
+-->
+<!-- bt4-update:pt
+- Os limites originais das arenas foram restaurados.
+-->
+
+# BT4decomp 0.1.39.6 R1 1.7
+
+- Browse open rooms for Duels, Tournaments and Tag Team. Room hosts can choose open access or invite players by code.
+- Practice 1v1 and 2v2 against the CPU from the online menu, or learn Tag Team in its new tutorial.
+- Fight across more of each arena and enjoy cleaner 4:3 fighter artwork.
+- Ranked shows your opponent's points and a clearer result notification. Confirmed withdrawals award points to the player who stayed.
+- Fixed missing audio for the second player in split-screen Tag Team. Thanks to @dantemustlive42-del for the report.
+
+Update from the game menu. Everyone in the room should use the same version.
+
+<!-- bt4-update:en
+- Browse open rooms for Duels, Tournaments and Tag Team. Room hosts can choose open access or invite players by code.
+- Practice 1v1 and 2v2 against the CPU from the online menu, or learn Tag Team in its new tutorial.
+- Fight across more of each arena and enjoy cleaner 4:3 fighter artwork.
+- Ranked shows your opponent's points and a clearer result notification. Confirmed withdrawals award points to the player who stayed.
+- Fixed missing audio for the second player in split-screen Tag Team. Thanks to @dantemustlive42-del for the report.
+-->
+<!-- bt4-update:es
+- Encuentra salas abiertas de Duelo, Torneo y Tag Team, o invita por código al crear una sala.
+- Practica 1 contra 1 y 2 contra 2 contra la CPU desde el menú online y aprende las mecánicas en el tutorial de Tag Team.
+- Las arenas tienen más espacio para combatir y los bordes 4:3 muestran solo las ilustraciones.
+- Clasificatorias muestra los puntos del rival y un aviso de resultados más claro. Si se confirma un abandono, el jugador que se quedó recibe sus puntos.
+- Corregido el audio del segundo jugador en la pantalla dividida de Tag Team. Gracias a @dantemustlive42-del por el reporte.
+-->
+<!-- bt4-update:pt
+- Encontre salas abertas de Duelo, Torneio e Tag Team ou convide jogadores pelo código da sala.
+- Pratique 1 contra 1 e 2 contra 2 contra a CPU pelo menu online e aprenda as mecânicas no tutorial de Tag Team.
+- As arenas têm mais espaço para lutar e as bordas 4:3 mostram apenas as ilustrações.
+- As ranqueadas mostram os pontos do adversário e um aviso de resultado mais claro. Em caso de abandono confirmado, quem ficou recebe seus pontos.
+- Corrigido o áudio do segundo jogador na tela dividida de Tag Team. Obrigado a @dantemustlive42-del pelo relato.
+-->
+
+# BT4decomp 0.1.39.6 R1 1.6
+
+- Online tournaments now support 32 players and two additional spectators.
+- Browse a clearer tournament bracket with a separate view for the final rounds.
+- Smoother online camera movement and fixes for Tag Team clashes, stage transitions and revivals.
+
+Update from the game menu. Everyone in the room should use the same version.
+
+<!-- bt4-update:en
+- Online tournaments now support 32 players and two additional spectators.
+- Browse a clearer tournament bracket with a separate view for the final rounds.
+- Smoother online camera movement and fixes for Tag Team clashes, stage transitions and revivals.
+-->
+<!-- bt4-update:es
+- Los torneos online admiten 32 jugadores y dos espectadores adicionales.
+- El cuadro del torneo incluye una vista para las rondas finales.
+- Cámara online más fluida y mejoras en choques, cambios de escenario y reanimaciones de Tag Team.
+-->
+<!-- bt4-update:pt
+- Os torneios online aceitam 32 jogadores e mais dois espectadores.
+- A chave tem uma área própria para as fases finais.
+- Câmera online mais suave e correções nos choques, nas transições de cenário e nas revives de Tag Team.
+-->
+
+# BT4decomp 0.1.39.6 R1 1.5
+
+- The winner controls the Ranked results menu, regardless of who hosted.
+- Search Again returns to the Ranked radar and starts a fresh search.
+- Ordinary defeats use both players' ratings. Repeated normal wins against the same rival are scored normally.
+
+Update from the game menu to keep your existing installation, saves and settings. Both players should update before searching for Ranked.
+
+<!-- bt4-update:en
+- The winner controls the Ranked results menu.
+- Search Again returns to the Ranked radar for a new match.
+- Ordinary defeats no longer deduct a percentage of your streak.
+-->
+<!-- bt4-update:es
+- El ganador controla el menú de resultados de Ranked.
+- Volver a buscar te lleva al radar de Ranked para una partida nueva.
+- Las derrotas normales ya no descuentan un porcentaje de la racha.
+-->
+<!-- bt4-update:pt
+- O vencedor controla o menu de resultados da Ranked.
+- Buscar novamente volta ao radar da Ranked para uma nova partida.
+- As derrotas normais já não descontam uma porcentagem da sequência.
+-->
+
+# BT4decomp 0.1.39.6 R1 1.4
+
+- Ranked: confirmed abandonment costs 100 points, down to zero. The opponent receives the normal win reward.
+- Fix incorrect surrender attribution during connection failures and recovery of pending match results.
+- Broaden online admission for shared connections. Other scoring rules and existing points are retained.
+
+Update before searching for a new Ranked match. Saves, languages and personal settings are retained.
+
+<!-- bt4-update:en
+- Confirmed Ranked abandonment costs 100 points, down to zero; the opponent receives the normal win reward.
+- Fix incorrect surrender attribution during connection failures.
+- Broaden online admission for shared connections. Update before entering Ranked.
+-->
+<!-- bt4-update:es
+- Abandonar una Ranked cuesta 100 puntos, hasta llegar a cero; el rival recibe la recompensa normal de victoria.
+- Corrige las rendiciones atribuidas incorrectamente durante cortes de conexión.
+- Amplía el acceso online en conexiones compartidas. Actualiza antes de entrar en Rankeds.
+-->
+<!-- bt4-update:pt
+- Abandonar uma Ranked custa 100 pontos, até chegar a zero; o adversário recebe a recompensa normal da vitória.
+- Corrige desistências atribuídas incorretamente durante falhas de conexão.
+- Amplia o acesso online em conexões compartilhadas. Atualize antes de entrar nas Rankeds.
+-->
+
+# BT4decomp 0.1.39.6 R1 1.3
+
+- Fix Tag Team camera shaking when switching between lock-on and free view.
+- Fix aerial clashes that could leave fighters invisible or unable to move, including interference from another fighter.
+
+All players must update and create a new room. Saves, languages and personal settings are retained.
+
+<!-- bt4-update:en
+- Fix camera shaking between lock-on and free view in Tag Team.
+- Fix fighters becoming invisible or stuck after aerial clashes.
+- Everyone must update and create a new room.
+-->
+<!-- bt4-update:es
+- Corrige los tirones de cámara entre el fijado de objetivo y la vista libre en Tag Team.
+- Corrige los luchadores invisibles o inmovilizados después de los choques aéreos.
+- Todos deben actualizar y crear una sala nueva.
+-->
+<!-- bt4-update:pt
+- Corrige os movimentos bruscos da câmera entre a mira e a visão livre no Tag Team.
+- Corrige lutadores invisíveis ou presos após confrontos aéreos.
+- Todos devem atualizar e criar uma sala nova.
+-->
+
+# BT4decomp 0.1.39.6 R1 1.2
+
+- Correcciones de cierres, cámaras y selección de personajes en Tag Team.
+- Corregido el cambio de cuerpo de Ginyu y varios problemas de voces.
+- Potharas habilitados en salas privadas, torneos y Tag Team. Partida rápida y Rankeds mantienen las restricciones.
+- Mejoras en torneos, compatibilidad con mandos y guardado de ajustes.
+- Compatibilidad con RecompLauncher.
+
+Todos los jugadores deben actualizar y crear una sala nueva.
+
+<!-- bt4-update:en
+- Tag Team crash, camera and character-selection fixes.
+- Fixes for Ginyu's Body Change and character voices.
+- Potaras in private rooms, tournaments and custom Tag Team. Quick Match and Ranked retain restrictions.
+- Tournament, controller and settings improvements. RecompLauncher support.
+- Everyone must update and create a new room.
+-->
+<!-- bt4-update:es
+- Correcciones de cierres, cámaras y selección de personajes en Tag Team.
+- Corregido el cambio de cuerpo de Ginyu y varios problemas de voces.
+- Potharas en privadas, torneos y Tag Team. Partida rápida y Rankeds mantienen las restricciones.
+- Mejoras en torneos, mandos y ajustes. Compatibilidad con RecompLauncher.
+- Todos deben actualizar y crear una sala nueva.
+-->
+<!-- bt4-update:pt
+- Correções de fechamentos, câmeras e seleção de personagens no Tag Team.
+- Correções na troca de corpo de Ginyu e nas vozes.
+- Potaras em salas privadas, torneios e Tag Team personalizado. Partida Rápida e Ranked mantêm as restrições.
+- Melhorias em torneios, controles e configurações. Suporte ao RecompLauncher.
+- Todos devem atualizar e criar uma sala nova.
+-->
+
+# 0.1.39.6 R1 1.0
+
+- Restore controller and keyboard input during online combat. Public builds now deliver gameplay inputs independently of developer pause controls.
+
+<!-- bt4-update:en
+- Fix controls becoming unresponsive when an online fight starts. Update both players before creating a new match.
+-->
+<!-- bt4-update:es
+- Corrige los controles que dejan de responder al comenzar un combate online. Actualicen ambos jugadores antes de crear una nueva partida.
+-->
+<!-- bt4-update:pt
+- Corrige os controles que param de responder quando uma luta online começa. Os dois jogadores devem atualizar antes de criar uma nova partida.
+-->
+
+# BT4decomp 0.1.39.6
+
+- Expand Tag Team with a dedicated local menu, simultaneous character selection, per-fighter health and Boss rules, shared private-room options, cooperative revival, joint attacks, three-link pursuits and cooperative fusions.
+- Add optional split-screen presentation, classic and Modern ally HUDs over the fighters, clearer technique costs and controller-button prompts. Keep the approved Modern HUD layout and Boost priority.
+- Add enemy, ally and free-camera focus modes with one selectable targeting method: L3, right stick or D-pad. Protect Z Counters from accidental retargeting.
+- Correct the two identified effect/technique lifecycle crashes, preserve other players' selections when undoing a choice, and base percentage healing on native health under Tag Team health multipliers.
+- Keep other fighters active during transformations and show a shared attack camera when a sequence stops everyone.
+- Negotiate duel input delay and up to eight rollback frames from the measured connection. Private hosts can retain manual settings.
+- Expand online tournaments to 22 total members, with at most two watching the current bout, original-style bracket pages and a native in-battle winner menu before returning.
+- Add training resource controls, opponent behaviors, four recording slots and an input-delay simulator. Add the English-profile anime soundtrack option using installed Spanish-profile music.
+- Prepare monthly Ranked scoring, the shared Dragon Ball collection and longer private-room idle leases. These service changes remain gated until the separate server rollout.
+- Other open audio, rendering, controller and security reports remain scheduled for the following hotfix; this release does not claim all GitHub issues are fixed.
+
+<!-- bt4-update:en
+- Expanded Tag Team: local and private online options, Boss rules, revival, joint attacks, chained pursuits and cooperative fusions.
+- Optional split screen, classic/Modern ally HUDs, clearer technique costs and enemy/ally/free camera focus.
+- Adaptive duel connection settings, 22-member tournaments and an in-battle winner menu.
+- Expanded training tools, soundtrack options and fixes for the two identified Tag Team crashes.
+- Monthly Ranked rules and Dragon Ball persistence require the separate server activation. Remaining reported bugs follow in a later hotfix.
+-->
+<!-- bt4-update:es
+- Tag Team ampliado: opciones locales y privadas online, modo Jefe, reanimación, ataques conjuntos, acometidas encadenadas y fusiones cooperativas.
+- Pantalla dividida opcional, HUD de aliados clásico/Modern, costes de técnicas más claros y enfoque en enemigos, aliados o cámara libre.
+- Conexión automática para duelos, torneos de 22 miembros y menú de victoria dentro del combate.
+- Entrenamiento ampliado, opciones de música y correcciones de las dos causas de cierre identificadas en Tag Team.
+- Las reglas mensuales de Clasificatorias y la colección persistente de esferas requieren la activación del servidor. Los errores reportados restantes quedan para un hotfix posterior.
+-->
+<!-- bt4-update:pt
+- Tag Team ampliado: opções locais e privadas online, modo Chefe, reanimação, ataques conjuntos, investidas encadeadas e fusões cooperativas.
+- Tela dividida opcional, HUD clássico/Modern dos aliados, custos de técnicas mais claros e foco em inimigos, aliados ou câmera livre.
+- Conexão automática para duelos, torneios com 22 membros e menu de vitória dentro da luta.
+- Treinamento ampliado, opções de música e correções das duas causas de fechamento identificadas no Tag Team.
+- As regras mensais das ranqueadas e a coleção persistente de esferas exigem a ativação do servidor. Os demais erros relatados ficam para um hotfix posterior.
+-->
+
 # 0.1.39.5 R5 1.7
 
 - Online system maintenance and compatibility updates across matchmaking modes.

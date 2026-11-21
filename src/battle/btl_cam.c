@@ -5,6 +5,9 @@ extern int TagBattle_Active(void);
 #include "battle/battle.h"
 #include "battle/btl_cam.h"
 #ifdef PORT
+extern int Port_NetView(void);
+extern int TagBattle_Network(void);
+extern s32 BtlSeq_IsFighting(void);
 #include "battle/stg_a.h" /* (script mods' camera: the stage) */
 #endif
 #include "battle/btl_demo_cam.h"
@@ -14,6 +17,7 @@ extern int TagBattle_Active(void);
 #ifdef PORT
 #include "../../port/src/port_host.h"
 #include "../../port/src/gs/presentation.h"
+#include "../../port/src/gs/mods.h"
 #endif
 
 /* Battle camera, 0x23E040-0x23F620. See battle/btl_cam.h for the structures and the per-frame flow. */
@@ -398,7 +402,7 @@ static s32 BtlCam_PortZoom(BtlCamView *view, s32 zoom) {
    BtlCam_UpdateView. How much wider than the game's the selected view is drawn: the culling of what is drawn (the
    stage's frustum, src/battle/stg_a.c; the effects' clip planes, eft_a.c) widens by as much, or what the wider view
    shows at its edges is left out. 1 without (never narrower than the game's). */
-static s32 sPortZoomView[2] = {1000, 1000};
+PORT_HOST static s32 sPortZoomView[2] = {1000, 1000};
 /* Host presentation state. A priority/chase override can read the same view
  * twice during one blank, and rollback can rebuild old blanks. Neither should
  * advance Lua inertia or stage-collision hysteresis a second time. */
@@ -407,6 +411,11 @@ PORT_HOST static struct {
     u32 blank;
     Vec4 pos, rot;
 } sPortCameraPose[2];
+PORT_HOST static struct {
+    s32 valid, obj, stage;
+    u32 blank;
+    Vec4 pos, rot;
+} sOnlineCamera[2];
 PORT_HOST static f32 sPortCollisionHeld[2] = {1.0f, 1.0f};
 PORT_HOST static s32 sPortCollisionClear[2], sPortCollisionObj[2];
 f32 Port_CamCull(void) {
@@ -489,6 +498,7 @@ void BtlCam_Reset(void) {
 #ifdef PORT
     sPortFreeCamLive = 0;
     memset(sPortCameraPose, 0, sizeof(sPortCameraPose));
+    memset(sOnlineCamera, 0, sizeof(sOnlineCamera));
     sPortCollisionHeld[0] = sPortCollisionHeld[1] = 1.0f;
     memset(sPortCollisionClear, 0, sizeof(sPortCollisionClear));
     sPortCollisionObj[0] = sPortCollisionObj[1] = -1;
@@ -519,6 +529,47 @@ void BtlCam_Term(void) {
 }
 
 #ifdef PORT
+static void BtlCam_BlendOnlinePose(BtlCamView *view, Vec4 *previousPos, Vec4 *previousRot) {
+    f32 weight = Vec3_DistSq(previousPos, &view->pos) > 64.0f ? 0.32f : 0.80f;
+    for (s32 i = 0; i < 3; ++i) {
+        f32 *pos = (f32 *)&view->pos, *rot = (f32 *)&view->rot;
+        const f32 oldPos = ((f32 *)previousPos)[i], oldRot = ((f32 *)previousRot)[i];
+        f32 delta = rot[i] - oldRot;
+        if (delta > 3.14159265f) delta -= 6.28318531f;
+        if (delta < -3.14159265f) delta += 6.28318531f;
+        pos[i] = oldPos + weight * (pos[i] - oldPos);
+        rot[i] = oldRot + (delta > 0.25f || delta < -0.25f ? 0.32f : weight) * delta;
+        if (rot[i] > 3.14159265f) rot[i] -= 6.28318531f;
+        if (rot[i] < -3.14159265f) rot[i] += 6.28318531f;
+    }
+}
+
+/* Keep presentation history on the host, across rollback. Let continuous
+ * movement through, but spread sudden prediction corrections over a few
+ * visible ticks. The stage trace still runs on the resulting pose. */
+static void BtlCam_SmoothOnline(BtlCamView *view, s32 objId) {
+    extern s32 BtlSeq_IsFighting(void), ChrCam_IsCutActive(void *);
+    extern void *BtlChar_FindByObjId(s32);
+    extern u32 gPortLiveBlanks;
+    const s32 pane = view->index & 1;
+    __typeof__(sOnlineCamera[0]) *p = &sOnlineCamera[pane];
+    void *chr = BtlChar_FindByObjId(objId);
+    if ((!TagBattle_Network() && Port_NetView() < 0) || !Mods_WantCamera() || !chr ||
+        PortSpectator_Mode() || !BtlSeq_IsFighting() || ChrCam_IsCutActive(chr)) {
+        p->valid = 0;
+        return;
+    }
+    if (p->valid && p->obj == objId && p->stage == Battle_GetStage() && gPortLiveBlanks - p->blank <= 4) {
+        BtlCam_BlendOnlinePose(view, &p->pos, &p->rot);
+    }
+    p->valid = 1;
+    p->obj = objId;
+    p->stage = Battle_GetStage();
+    p->blank = gPortLiveBlanks;
+    p->pos = view->pos;
+    p->rot = view->rot;
+}
+
 static void BtlCam_PortMods(BtlCamView *view,s32 side,s32 objId) {
         extern s32 gPortResim;
         extern u32 gPortLiveBlanks;
@@ -528,6 +579,18 @@ static void BtlCam_PortMods(BtlCamView *view,s32 side,s32 objId) {
         extern s32 Port_ModsCamCollide(s32 side);
         s32 k = view->index & 1;
         if (gPortResim) return;
+        if(Mods_SplitScreen()&&!Port_PresentationSplitDrawing(-1)){
+            sPortZoomView[k]=1000;
+            return;
+        }
+#ifdef BT4_TAG_TEAM_EXPANDED
+        /* A fused pair shares one fighter camera, even in two viewports.
+         * Advance Lua inertia once, then reuse its pose for the spectator. */
+        if(TagBattle_Active()&&Battle_IsSplitScreen()&&sPortCameraPose[k^1].valid&&
+           sPortCameraPose[k^1].blank==gPortLiveBlanks&&sPortCameraPose[k^1].side==side&&sPortCameraPose[k^1].obj==objId){
+            sPortCameraPose[k]=sPortCameraPose[k^1];
+        }
+#endif
         if (sPortCameraPose[k].valid && sPortCameraPose[k].blank == gPortLiveBlanks &&
             sPortCameraPose[k].side == side && sPortCameraPose[k].obj == objId) {
             view->pos = sPortCameraPose[k].pos;
@@ -539,7 +602,10 @@ static void BtlCam_PortMods(BtlCamView *view,s32 side,s32 objId) {
         Port_ModsCamera(side, objId, (s32)(u32)&view->pos, (s32)(u32)&view->rot, (Battle_GetWork()->flags & BATTLE_FLAG_PAUSE)!=0);
         sPortZoomView[view->index & 1] = Port_ModsCamZoom(side); /* (the zoom, the stage: what they also asked) */
         if (Port_ModsCamCollide(side)) {
+            BtlCam_SmoothOnline(view, objId);
             BtlCam_PortCollide(view, objId);
+        } else {
+            sOnlineCamera[k].valid = 0;
         }
         sPortCameraPose[k].valid = 1;
         sPortCameraPose[k].blank = gPortLiveBlanks;
@@ -551,10 +617,52 @@ static void BtlCam_PortMods(BtlCamView *view,s32 side,s32 objId) {
 }
 #endif
 
+#ifdef BT4_TAG_TEAM_EXPANDED
+void BtlCam_TestSplitSpectatorEye(s32 player, Vec4 *eye) {
+    *eye = gBtlCam->views[player].pos;
+}
+
+static void BtlCam_SplitSpectatorOrbit(BtlCamView *view, s32 player, s32 objId) {
+    Vec4 focus, proposed, resolved;
+    f32 yaw, pitch, dx, dy, dz, flat, distance, heading, elevation;
+    extern void BtlCharApi_GetBasePos(s32 objId, Vec4 *out);
+    extern f32 BtlCharApi_GetHeight(s32 objId);
+    if (!TagBattle_SplitOrbit(player, &yaw, &pitch)) return;
+    BtlCharApi_GetBasePos(objId, &focus);
+    focus.y -= .25f * BtlCharApi_GetHeight(objId);
+    dx = view->pos.x - focus.x;
+    dy = view->pos.y - focus.y;
+    dz = view->pos.z - focus.z;
+    flat = sqrtf(dx * dx + dz * dz);
+    distance = sqrtf(flat * flat + dy * dy);
+    if (distance < 1) distance = 1;
+    heading = atan2f(dx, dz) + yaw;
+    elevation = atan2f(dy, flat) + pitch;
+    if (elevation > 1.25f) elevation = 1.25f;
+    if (elevation < -1.25f) elevation = -1.25f;
+    proposed = focus;
+    proposed.x += distance * cosf(elevation) * sinf(heading);
+    proposed.y += distance * sinf(elevation);
+    proposed.z += distance * cosf(elevation) * cosf(heading);
+    BtlCam_TraceStage(&resolved, &proposed, &focus, NULL, NULL);
+    view->pos = resolved;
+    dx = focus.x - resolved.x;
+    dy = focus.y - resolved.y;
+    dz = focus.z - resolved.z;
+    view->rot.x = atan2f(-dy, sqrtf(dx * dx + dz * dz));
+    view->rot.y = atan2f(dx, dz);
+    view->rot.z = 0;
+}
+#endif
+
 /* Per frame: copies one side's fighter camera pose and priority into the selected view and builds it. */
 void BtlCam_UpdateView(s32 side) {
     BtlCamView *view = gBtlCam->cur;
-    s32 objId = BattleSide_GetObjId(side);
+    s32 objId, actor = side;
+#ifdef BT4_TAG_TEAM_EXPANDED
+    if (TagBattle_Active() && Battle_IsSplitScreen()) actor = TagBattle_SplitViewActor(side);
+#endif
+    objId = BattleSide_GetObjId(actor);
 
     if (Battle_IsSplitScreen()) {
         BtlCam_SetLayout(1, 0);
@@ -564,7 +672,10 @@ void BtlCam_UpdateView(s32 side) {
     /* Tag selects its actual viewer in UpdateOverride. Applying the Lua
        camera here as well advances side 0's inertia for two different actors
        in one tick, before the local actor's final camera is known. */
-    if(!TagBattle_Active())BtlCam_PortMods(view,side,objId);
+    if(!TagBattle_Active()||Battle_IsSplitScreen())BtlCam_PortMods(view,side,objId);
+#endif
+#ifdef BT4_TAG_TEAM_EXPANDED
+    if (TagBattle_Active() && Battle_IsSplitScreen()) BtlCam_SplitSpectatorOrbit(view, side, objId);
 #endif
     view->priority = BtlCharApi_HasCamPriority(objId);
     BtlCam_BuildView(view, 1);
@@ -697,11 +808,6 @@ s32 BtlCam_GetPriorityView(void) {
     return best;
 }
 
-/* 1 while the second battle view is the selected one. */
-s32 BtlCam_CurIndex(void) {
-    return gBtlCam != NULL && gBtlCam->cur == &gBtlCam->views[1];
-}
-
 /* Makes one of the two battle views the selected and current one. */
 void BtlCam_SelectView(s32 idx) {
     gBtlCam->cur = &gBtlCam->views[idx];
@@ -712,6 +818,55 @@ void BtlCam_SelectView(s32 idx) {
 void BtlCam_ApplyView(s32 scissor) {
     View_Apply(&gBtlCam->cur->view, scissor);
 }
+
+#ifdef PORT
+/* Two temporary render views. Never change the battle's screenMode, fighter
+ * cameras or camera animation clocks to service a local Lua preference. */
+PORT_HOST static struct {
+    BtlCam camera;
+    View *current;
+    s32 zoom[2];
+    Mtx44 base[2][2],zoomed[2][2];
+    s32 zoomOn[2];
+    s32 active;
+} sPresentationSplitCamera;
+
+s32 BtlCam_PresentationSplitBegin(void) {
+    s32 pane,actor,obj,actors[2];
+    if(!Mods_SplitScreen()||!gBtlCam||sPresentationSplitCamera.active)return 0;
+    sPresentationSplitCamera.camera=*gBtlCam;
+    sPresentationSplitCamera.current=gBtlCamView;
+    memcpy(sPresentationSplitCamera.zoom,sPortZoomView,sizeof(sPortZoomView));
+    memcpy(sPresentationSplitCamera.base,sPortBase,sizeof(sPortBase));
+    memcpy(sPresentationSplitCamera.zoomed,sPortZoomed,sizeof(sPortZoomed));
+    memcpy(sPresentationSplitCamera.zoomOn,sPortZoomOn,sizeof(sPortZoomOn));
+    sPresentationSplitCamera.active=1;
+    actors[0]=Port_PresentationSplitActor(0);actors[1]=Port_PresentationSplitActor(1);
+    Port_PresentationSplitDrawing(1);
+    for(pane=0;pane<2;++pane){
+        BtlCamView *view=&gBtlCam->views[pane];
+        actor=actors[pane];obj=BattleSide_GetObjId(actor);
+        BtlCam_SelectView(pane);
+        BtlCam_SetViewLayout(view,pane?VIEW_LAYOUT_RIGHT:VIEW_LAYOUT_LEFT);
+        BtlCharApi_GetCamPose(obj,&view->pos,&view->rot);
+        BtlCam_PortMods(view,pane,obj);
+        BtlCam_BuildView(view,1);
+    }
+    return 1;
+}
+
+void BtlCam_PresentationSplitEnd(void) {
+    if(!sPresentationSplitCamera.active)return;
+    *gBtlCam=sPresentationSplitCamera.camera;
+    memcpy(sPortZoomView,sPresentationSplitCamera.zoom,sizeof(sPortZoomView));
+    memcpy(sPortBase,sPresentationSplitCamera.base,sizeof(sPortBase));
+    memcpy(sPortZoomed,sPresentationSplitCamera.zoomed,sizeof(sPortZoomed));
+    memcpy(sPortZoomOn,sPresentationSplitCamera.zoomOn,sizeof(sPortZoomOn));
+    gBtlCamView=sPresentationSplitCamera.current;
+    sPresentationSplitCamera.active=0;
+    Port_PresentationSplitDrawing(0);
+}
+#endif
 
 #ifdef PORT
 extern int Port_NetView(void); /* port/src/gs/net.c: the local player's view (0 or 1), or -1 */
@@ -778,48 +933,138 @@ static void BtlCam_PortChaseView(s32 side) {
     BtlCam_SetLayout(0,1);
     BtlCam_ApplyView(1);
 }
+#ifdef BT4_TAG_TEAM_EXPANDED
+static f32 TagCam_Max(f32 a,f32 b){return a>b?a:b;}
+static f32 TagCam_Min(f32 a,f32 b){return a<b?a:b;}
+/* Keep the technique's own angle. Move it only far enough to contain both
+ * fighters, rather than replacing it with a distant overview. */
+static void BtlCam_TagJointFrame(s32 actor){
+    extern s32 TagAssist_CameraPartner(s32);
+    extern void BtlCharApi_GetBasePos(s32,Vec4 *);
+    extern f32 BtlCharApi_GetHeight(s32),BtlCharApi_GetRadius(s32);
+    extern f32 sinf(f32),cosf(f32);
+    extern int Port_AspectMilli(void);
+    s32 partner=TagAssist_CameraPartner(actor),i,j,k;
+    Vec4 p[2],eye,resolved,focus;
+    f32 height[2],radius[2],r[3],u[3],f[3],x[2],y[2],z[2];
+    f32 sy,cy,sp,cp,tv,th,back,mx=0,my=0;
+    if(partner<0||PortSpectator_Mode())return;
+    eye=gBtlCam->cur->pos;
+    sy=sinf(gBtlCam->cur->rot.y);cy=cosf(gBtlCam->cur->rot.y);
+    sp=sinf(gBtlCam->cur->rot.x);cp=cosf(gBtlCam->cur->rot.x);
+    r[0]=cy;r[1]=0;r[2]=-sy;u[0]=-sy*sp;u[1]=-cp;u[2]=-cy*sp;
+    f[0]=sy*cp;f[1]=-sp;f[2]=cy*cp;
+    tv=224.0f/gBtlCam->cur->view.screenDist;
+    th=tv*Port_AspectMilli()/1000.0f;
+    for(i=0;i<2;++i){
+        s32 obj=BattleSide_GetObjId(i?partner:actor);
+        BtlCharApi_GetBasePos(obj,&p[i]);height[i]=BtlCharApi_GetHeight(obj);radius[i]=BtlCharApi_GetRadius(obj)+2;
+        p[i].y-=height[i]*.5f;x[i]=y[i]=z[i]=0;
+        for(k=0;k<3;++k){f32 d=((f32 *)&p[i])[k]-((f32 *)&eye)[k];x[i]+=d*r[k];y[i]+=d*u[k];z[i]+=d*f[k];}
+    }
+    for(back=0;back<=80;back+=1){
+        f32 loX=-1e20f,hiX=1e20f,loY=-1e20f,hiY=1e20f;
+        for(i=0;i<2;++i){
+            f32 depth=z[i]+back-radius[i];
+            if(depth<2){loX=1;hiX=-1;break;}
+            for(j=-1;j<=1;j+=2){
+                f32 px=x[i]+radius[i]*j,py=y[i]+height[i]*.55f*j;
+                loX=TagCam_Max(loX,px-.92f*th*depth);hiX=TagCam_Min(hiX,px+.28f*th*depth);
+                loY=TagCam_Max(loY,py-.8f*tv*depth);hiY=TagCam_Min(hiY,py+.96f*tv*depth);
+            }
+        }
+        if(loX<=hiX&&loY<=hiY){mx=TagCam_Max(loX,TagCam_Min(0,hiX));my=TagCam_Max(loY,TagCam_Min(0,hiY));break;}
+    }
+    if(getenv("BT4_RENDER_TEST")&&getenv("BT4_TAG_ASSIST_TEST")){
+        static s32 logged;
+        if(!logged++)fprintf(stderr,"tag joint camera: eye=%.2f,%.2f,%.2f rot=%.2f,%.2f,%.2f dist=%.2f tan=%.2f,%.2f p=%.2f,%.2f,%.2f q=%.2f,%.2f,%.2f back=%.2f shift=%.2f,%.2f\n",
+            eye.x,eye.y,eye.z,gBtlCam->cur->rot.x,gBtlCam->cur->rot.y,gBtlCam->cur->rot.z,gBtlCam->cur->view.screenDist,tv,th,
+            x[0],y[0],z[0],x[1],y[1],z[1],back,mx,my);
+    }
+    if(back>80)return;
+    focus=p[0];
+    for(k=0;k<3;++k)((f32 *)&eye)[k]+=mx*r[k]+my*u[k]-back*f[k];
+    BtlCam_TraceStage(&resolved,&eye,&focus,NULL,NULL);
+    gBtlCam->cur->pos=resolved;BtlCam_BuildView(gBtlCam->cur,1);
+}
+#endif
 #endif
 /* Decides whether one full-screen view replaces the per-player views this frame; returns 1 if so. */
 s32 BtlCam_UpdateOverride(void) {
     s32 ret = 0;
     s32 idx;
 
+#ifdef PORT
+    if (getenv("BT4_RENDER_TEST") && getenv("BT4_ONLINE_CAMERA_REGRESSION") && BtlSeq_IsFighting()) {
+        BtlCamView view = {0};
+        Vec4 pos = {0}, rot = {0};
+        view.pos.x = 20.0f;
+        view.rot.y = -3.1f;
+        rot.y = 3.1f;
+        BtlCam_BlendOnlinePose(&view, &pos, &rot);
+        s32 pass = view.pos.x > 6.3f && view.pos.x < 6.5f && view.rot.y > 3.1f && view.rot.y < 3.14f;
+        view.pos.x = 1.0f;
+        BtlCam_BlendOnlinePose(&view, &pos, &rot);
+        pass &= view.pos.x > 0.79f && view.pos.x < 0.81f;
+        fprintf(stderr, "online camera step: correction damping and short-angle wrap %s\n", pass ? "PASS" : "FAIL");
+        exit(pass ? 0 : 3);
+    }
+#endif
+
+    if(TagBattle_Active()&&Battle_IsSplitScreen()){
+        extern s32 TagBattle_SharedCutOwner(void);
+        const s32 shared=TagBattle_SharedCutOwner();
+        if(shared>=0){
+            BtlCam_SelectView(0);
+            BtlCam_SetLayout(0,1);
+            BtlCharApi_GetCamPose(BattleSide_GetObjId(shared),&gBtlCam->cur->pos,&gBtlCam->cur->rot);
+            BtlCam_BuildView(gBtlCam->cur,1);
+            if(DemoCam_IsActive())DemoCam_Update();
+            return 1;
+        }
+        if(DemoCam_IsActive()){
+            extern s32 BtlSeq_IsFighting(void),Port_SpecialMoveCameras(s32);
+            DemoCam_Update();
+#ifdef BT4_TAG_TEAM_EXPANDED
+            if (BtlSeq_IsFighting() && (TagBattle_SplitSpectating(0) || TagBattle_SplitSpectating(1))) {
+                BtlCam_SelectView(0);
+                BtlCam_ApplyView(1);
+                return 0;
+            }
+#endif
+            if (BtlSeq_IsFighting() && Port_SpecialMoveCameras(-1)) {
+                extern void *BtlObj_Get(s32);
+                extern s32 TagBattle_CutVisible(s32,s32),TagBattle_SplitViewActor(s32);
+                s32 owner=-1,actor,v;
+                for(actor=0;actor<TagBattle_Count();++actor){
+                    void *obj=BtlObj_Get(BattleSide_GetObjId(actor));
+                    if(obj!=NULL&&(gDemoCam->obj==obj||gDemoCam->chr==obj)){owner=actor;break;}
+                }
+                if(owner>=0){
+                    for(v=0;v<2;++v){
+                        s32 viewer=TagBattle_SplitViewActor(v);
+                        if(owner==viewer||TagBattle_CutVisible(owner,viewer)){
+                            View *dst=&gBtlCam->views[v].view;
+                            Mtx_Copy(&dst->world2view,&gDemoCam->view.world2view);
+                            Mtx_Copy(&dst->world2view2,&gDemoCam->view.world2view2);
+                            View_UpdateMatrices(dst,&gDemoCam->view.pos);
+                        }
+                    }
+                    BtlCam_SelectView(0);
+                    BtlCam_ApplyView(1);
+                    return 0;
+                }
+            }
+            return !BtlSeq_IsFighting()||Port_SpecialMoveCameras(-1);
+        }
+        return 0;
+    }
     if (TagBattle_Active()) {
         /* Each TAG client keeps its own fighter's camera. Another fighter's
          * cut must not replace the local view. Advance shared demo animation
          * time normally, then restore the local view when it has another owner. */
         void *own;
-        s32 localActor;
-        {
-            extern s32 TagBattle_CouchSplit(void),BtlSeq_IsFighting(void);
-            extern void TagBattle_SetViewSlot(s32 slot);
-            TagBattle_SetViewSlot(0);
-            /* Intros, finishes and results keep the single full-screen view. */
-            (void)BtlSeq_IsFighting;
-            if(TagBattle_CouchSplit()){
-                /* Couch co-op: each half keeps its own player's camera. */
-                s32 v;
-                for(v=0;v<2;++v){
-                    s32 viewer,owner;
-                    BtlCam_SelectView(v);
-                    TagBattle_SetViewSlot(v);
-                    viewer=TagBattle_ViewActor();
-                    owner=TagBattle_CameraActor(viewer);
-                    BtlCam_SetLayout(1, 0);
-                    BtlCharApi_GetCamPose(BattleSide_GetObjId(owner),&gBtlCam->cur->pos,&gBtlCam->cur->rot);
-#ifdef PORT
-                    BtlCam_PortMods(gBtlCam->cur,v,BattleSide_GetObjId(owner));
-#endif
-                    BtlCam_BuildView(gBtlCam->cur,1);
-                }
-                if(DemoCam_IsActive())DemoCam_Update();
-                TagBattle_SetViewSlot(0);
-                BtlCam_SelectView(0);
-                BtlCam_ApplyView(1);
-                return 0;
-            }
-        }
-        localActor=TagBattle_ViewActor();
+        s32 localActor=TagBattle_ViewActor();
         s32 actor,focus=localActor,priority=-1,demoOwner=-1;
         s32 defaultOwner=TagBattle_DefaultCutOwner();
         extern void *BtlChar_Get(s32 actor);
@@ -859,6 +1104,9 @@ s32 BtlCam_UpdateOverride(void) {
             BtlCam_BuildView(gBtlCam->cur,1);
         }
 #ifdef PORT
+        #ifdef BT4_TAG_TEAM_EXPANDED
+        BtlCam_TagJointFrame(localActor);
+        #endif
         (void)BtlCam_PortFreeCamera(1);
 #endif
         return 1;
@@ -880,6 +1128,9 @@ s32 BtlCam_UpdateOverride(void) {
            player's view, full screen. That is this function's own case of "one view has priority", with the
            local player's view taking the place when the game itself gives none priority. */
         if (idx < 0) {
+            idx = Port_NetView();
+        }
+        if (Mods_WantCamera() && !PortSpectator_Mode() && BtlSeq_IsFighting() && Port_NetView() >= 0) {
             idx = Port_NetView();
         }
 #endif
@@ -930,12 +1181,6 @@ void TagBattle_HudCaptureView(void *ptr) {
         Port_TagHudView(sTagHudView,sTagHudProjection,&sTagHudNear);
     }
 }
-/* The same snapshot taken from one of the two battle views (couch split: one overlay per half). */
-void TagBattle_HudCaptureSlot(s32 slot) {
-    if (gBtlCam != NULL) {
-        TagBattle_HudCaptureView(&gBtlCam->views[slot == 1].view);
-    }
-}
 s32 TagBattle_HudCamera(f32 *basis) { return sTagHudViewValid && ThBasis(sTagHudView,basis); }
 s32 TagBattle_HudHead(s32 actor,f32 *out) {
     Vec4 p,base;
@@ -956,6 +1201,26 @@ s32 TagBattle_HudHead(s32 actor,f32 *out) {
 }
 s32 TagBattle_HudProject(f32 *head,f32 *out) { return sTagHudViewValid && ThProject(sTagHudProjection,head,sTagHudNear,out); }
 void TagBattle_HudRear(f32 *head,f32 *out) { ThRear(sTagHudView,head,out); }
+
+/* Stable per-viewport ally anchor. The standing height avoids animation/head
+ * expression jitter; these read-only queries do not touch collision scratch. */
+#ifdef PORT
+s32 TagBattle_HudAllyProject(s32 pane,s32 actor,f32 *out) {
+    extern void BtlCharApi_GetBasePos(s32,Vec4 *);
+    extern f32 BtlCharApi_GetHeight(s32);
+    Vec4 head;
+    View *view;
+    s32 obj;
+    if(!gBtlCam || pane<0 || pane>1 || actor<0 || actor>=TagBattle_Count())return 0;
+    view=&gBtlCam->views[pane].view;
+    obj=BattleSide_GetObjId(actor);
+    BtlCharApi_GetBasePos(obj,&head);
+    head.y-=BtlCharApi_GetHeight(obj)*.85f+4.0f;
+    if(!ThProject((f32 *)&view->world2screen,(f32 *)&head,view->nearZ,out))return 0;
+    if(!(out[0]>=0&&out[0]<=512&&out[1]>=0&&out[1]<=448))return 0;
+    return SpecCamera_StageRay((f32 *)&view->pos,(f32 *)&head)>=.985f;
+}
+#endif
 
 /* Clears the debug camera's own view and gives it the full-screen layout. */
 void DbgCam_Init(void) {

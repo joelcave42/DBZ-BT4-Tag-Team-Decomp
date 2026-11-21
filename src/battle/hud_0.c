@@ -53,6 +53,24 @@ static BtlMenu sPresentationPauseMenu;
 static BtlMenuItem sPresentationPauseItems[32];
 static s32 sPresentationPauseReady;
 static s32 sHudPauseDismissRequested;
+extern int Port_RankedActive(void);
+extern void BattleResult_Set(s32 flags, s32 reason);
+static s32 sRankedPauseQuitPad = -1;
+static void PauseMenu_RecordRankedQuit(s32 pad, s32 which, s32 id) {
+    extern int Port_RankedActive(void);
+    if (which == 0 && pad >= 0 && pad <= 1 && Port_RankedActive() &&
+        (id == 0xD || id == 0xE || id == 0xF)) sRankedPauseQuitPad = pad;
+}
+s32 PauseMenu_ConfirmedQuitPad(void) { return sRankedPauseQuitPad; }
+static s32 PauseMenu_RankedRequeue(s32 pad, s32 which, s32 id) {
+    extern int Port_NetMe(void);
+    extern void Port_NetRequestRankedRequeue(void);
+    if (which != 1 || id != 0x13 || !Port_RankedActive()) return 0;
+    if (Port_NetMe() == pad) Port_NetRequestRankedRequeue();
+    /* Return to the original Online search screen, never the rematch path. */
+    BattleResult_Set(BTL_RESULT_ABORT, 8);
+    return 1;
+}
 extern int PortHud_Hidden(void);
 extern void PortHud_Toggle(void);
 /* The menu input is simulated on both 1v1 peers; only its owner changes
@@ -94,6 +112,9 @@ extern s32 BtlAiMgr_GetLevel(s32 side);
 extern void BtlAiMgr_SetLevel(s32 side, s32 level);
 extern s32 CpuLevel_ToSetting(s32 level);   /* internal CPU level -> menu difficulty 0..4, -1 when off */
 extern s32 CpuLevel_FromSetting(s32 setting); /* menu difficulty 0..4 -> internal CPU level 0, 6, 13, 21, 29 */
+#ifdef PORT
+#include "training_menu.inc"
+#endif
 
 /* Draws the battle's 2D layers: the HUD, the script's view update, then the pause menu. */
 void BtlGame_Draw(void) {
@@ -362,6 +383,7 @@ static void PauseMenu_PortRemove(BtlMenu *menu, s32 id) {
    same on every copy (the owner's side travels with the rules). */
 static BtlMenuItem sLobbyPause[2][8], sLobbyResult[2][8];
 static s32 sLobbyPauseCount[2], sLobbyResultCount[2], sLobbyBuilt;
+static BtlMenuItem sTournamentResult[4];
 
 static void PauseMenu_PortLobby(void) {
     BtlMenuItem *pause = gPauseMenuVersus.items, *result = gPauseMenuResultVersus.items, back;
@@ -403,6 +425,14 @@ static void PauseMenu_PortLobby(void) {
             }
         }
     }
+    memset(sTournamentResult, 0, sizeof(sTournamentResult));
+    for (i = 0; i < 4; ++i) {
+        sTournamentResult[i].text[0] = sTournamentResult[i].text[1] = 0x6FFA + i;
+        sTournamentResult[i].type = BTL_MENU_ITEM_RESULT;
+        sTournamentResult[i].disabled = i < 2;
+        sTournamentResult[i].id = i == 3 ? 0x1D : 0xE;
+    }
+    sTournamentResult[3].text[0] = sTournamentResult[3].text[1] = 0x6FF9;
     sLobbyBuilt = 1;
 }
 
@@ -419,6 +449,12 @@ static void PauseMenu_PortLobbyPick(BtlMenu *menu, s32 pad) {
         menu->items = sLobbyPause[mine];
         menu->count = sLobbyPauseCount[mine];
     } else if (menu == &gPauseMenuResultVersus) {
+        extern int Port_NetTournamentResult(void);
+        if (Port_NetTournamentResult()) {
+            menu->items = sTournamentResult;
+            menu->count = 4;
+            return;
+        }
         menu->items = sLobbyResult[mine];
         menu->count = sLobbyResultCount[mine];
     }
@@ -451,8 +487,10 @@ BtlMenu *PauseMenu_PortConfirmBox(void) {
 /* Battle start: allocates the menu work. */
 void PauseMenu_Init(void) {
 #ifdef PORT
+    sRankedPauseQuitPad=-1;
     sPresentationPauseReady=0;
     sHudPauseDismissRequested=0;
+    Training_Init();
     if(getenv("BT4_RENDER_TEST") && getenv("BT4_HUD_MENU_MATRIX")) {
         BtlMenu *menus[]={&gPauseMenuVersus,&gPauseMenuReplayRec,&gPauseMenuReplayPlay,
             &gPauseMenuMode1,&gPauseMenuMode2,&gPauseMenuMode3,&gPauseMenuMode4,
@@ -493,9 +531,15 @@ void PauseMenu_Init(void) {
             PauseMenu_PortRemove(&gPauseMenuResultVersus, 0x18);
             PauseMenu_PortRemove(&gPauseMenuResultVersus, 0x17);
             if(Port_RankedActive()){
-                // One rated battle per server-issued match. Return to Online
-                // to search again instead of silently playing unscored rematches.
-                PauseMenu_PortRemove(&gPauseMenuResultVersus,0x13);
+                extern int Port_NetRankedRequeueSupported(void);
+                if (Port_NetRankedRequeueSupported()) {
+                    for (s32 i = 0; i < gPauseMenuResultVersus.count; ++i) {
+                        BtlMenuItem *item = &gPauseMenuResultVersus.items[i];
+                        if (item->id == 0x13) item->text[0] = item->text[1] = 0x6FFD;
+                    }
+                } else {
+                    PauseMenu_PortRemove(&gPauseMenuResultVersus,0x13);
+                }
                 PauseMenu_PortRemove(&gPauseMenuResultVersus,0xD);
                 PauseMenu_PortRemove(&gPauseMenuVersus,0xD);
                 PauseMenu_PortRemove(&gPauseMenuVersus,0xC);
@@ -522,7 +566,7 @@ void PauseMenu_Init(void) {
     {
         BtlMenu *base=PauseMenu_GetMenu(0);
         s32 i,n=0,insertAfter=0;
-        if (base && base->count>0 && base->count<31) {
+        if (base && base->count>0 && base->count<29) {
             insertAfter=base->count>2?2:base->count-1;
             for(i=0;i<base->count;++i) {
                 if(base->items[i].sub && BtlMenu_IsSkillList(base->items[i].sub)) {
@@ -538,6 +582,11 @@ void PauseMenu_Init(void) {
                     memset(item,0,sizeof(*item));
                     item->id=0x7100;item->text[0]=item->text[1]=0x7100;
                     item->func=PauseMenu_HudToggle;item->type=BTL_MENU_ITEM_VALUE;
+                    if(Training_Active()){
+                        item=&sPresentationPauseItems[n++];
+                        memset(item,0,sizeof(*item));
+                        item->id=0x7250;item->text[0]=item->text[1]=0x7250;item->sub=Training_Menu();
+                    }
                 }
             }
             sPresentationPauseMenu.count=n;
@@ -574,12 +623,27 @@ s32 PauseMenu_Update(s32 pad, s32 which) {
     menu = PauseMenu_GetMenu(which);
 #ifdef PORT
     PauseMenu_PortLobbyPick(menu, pad);
+    if (which == 1 && getenv("BT4_RENDER_TEST") && getenv("BT4_TOURNAMENT_RESULT_MENU_TEST")) {
+        extern int Port_NetTournamentResult(void);
+        if (Port_NetTournamentResult()) {
+            static s32 testFrame;
+            extern volatile s32 gPortTagUiCaptureRequest;
+            ++testFrame;
+            gPad[pad].gamePressed = 0;
+            menu->cursor = atoi(getenv("BT4_TOURNAMENT_RESULT_MENU_TEST")) ? 3 : 2;
+            if (testFrame == 20) {
+                printf("tournament native result: count=%d return=%04x exit=%04x winner-pad=%d\n", menu->count,
+                       (u16)menu->items[2].text[0], (u16)menu->items[3].text[0], pad);
+                gPortTagUiCaptureRequest = 42;
+            }
+            if (testFrame == 60) gPad[pad].gamePressed = PADG_CROSS;
+        }
+    }
 #endif
 #ifdef PORT
     {
         extern s32 TagBattle_LocalActor(void);
-        extern s32 TagBattle_CouchActor(void);
-        s32 actor = TagBattle_Network() ? TagBattle_LocalActor() : (pad == 1 && TagBattle_CouchActor() >= 0) ? TagBattle_CouchActor() : pad;
+        s32 actor = TagBattle_Network() ? TagBattle_LocalActor() : pad;
         BtlMenu_SetScript(BtlObj_Get(BattleSide_GetObjId(actor))->skillText);
     }
 #else
@@ -609,6 +673,7 @@ s32 PauseMenu_Update(s32 pad, s32 which) {
     if (item != NULL) {
         Snd_PlaySe(1, 1);
 #ifdef PORT
+        PauseMenu_RecordRankedQuit(pad, which, item->id);
         {
             extern int TagBattle_Network(void);
             extern void Port_TagClose(void);
@@ -625,10 +690,24 @@ s32 PauseMenu_Update(s32 pad, s32 which) {
         }
 #endif
         switch (item->id) {
+#ifdef PORT
+        case 0x1D: {
+            extern int Port_NetMe(void), Port_NetTournamentResult(void);
+            extern void Port_NetRequestTournamentExit(void);
+            if (which == 1 && Port_NetTournamentResult()) {
+                if (Port_NetMe() == pad) Port_NetRequestTournamentExit();
+                set(BTL_RESULT_ABORT, 0x80);
+            }
+            break;
+        }
+#endif
         case 0xC:
             set(BTL_RESULT_ABORT, 0x8000);
             break;
         case 0x13:
+#ifdef PORT
+            if (PauseMenu_RankedRequeue(pad, which, item->id)) break;
+#endif
             set(BTL_RESULT_ABORT, 0x8000);
             break;
         case 0xD:

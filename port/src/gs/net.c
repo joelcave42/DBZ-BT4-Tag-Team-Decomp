@@ -72,6 +72,7 @@ static const uint32_t kVersion = NET_VERSION;
 #include "voice.h"
 #include "net_lobby.h"
 #include "net_update.h"
+#include "net_timing.h"
 static int sLobbyOther;
 
 /* What the meter shows (ui.cpp): the round trip time, and per second how often the game went back, how far, and
@@ -105,6 +106,11 @@ static int sAutoDelay;
 static int sOptAuto;      /* the host asked for the input delay to be chosen from the line's ping */
 static int sSetupRtt = -1; /* the smallest round trip measured while setting up, ms */
 static int sCfgAcked;
+static int sAdaptiveOffer, sAdaptive;
+static int sRankedRequeueSupported, sRankedRequeue;
+static int sTournamentExit;
+static NetTimingProbes sTimingProbes;
+static NetTimingQuality sTimingQuality;
 
 void Port_TestSlow(int what, int amount);
 
@@ -112,6 +118,31 @@ void Port_NetOptions(int rollback, int delay) {
     sOptRoll = rollback;
     sOptAuto = delay == -2; /* -2: automatic; -1: not said; else the delay in blanks */
     sOptDelay = delay >= 0 ? delay : -1;
+}
+
+void Port_NetAutomaticOptions(void) {
+    Port_NetOptions(-2, -2);
+}
+
+int Port_NetRankedRequeueSupported(void) {
+    return sRankedRequeueSupported && Port_RankedActive();
+}
+
+void Port_NetRequestRankedRequeue(void) {
+    if (Port_NetRankedRequeueSupported()) sRankedRequeue = 1;
+}
+
+int Port_NetTakeRankedRequeue(void) {
+    const int requested = sRankedRequeue;
+    sRankedRequeue = 0;
+    return requested;
+}
+
+void Port_NetRequestTournamentExit(void) { sTournamentExit = 1; }
+int Port_NetTakeTournamentExit(void) {
+    const int requested = sTournamentExit;
+    sTournamentExit = 0;
+    return requested;
 }
 
 #define NAME_LEN 20
@@ -146,6 +177,9 @@ static int sGoPending; /* a lobby's session has been asked for and has not begun
    seconds, none). One word: type | dp << 4 | time << 8. The host's travels with its other choices (T_HELLO_ACK,
    T_CONFIG); headless.c applies it on both sides when the session enters the versus mode. */
 static uint32_t sRules = 3u << 8; /* single battle, 240 seconds: the game's defaults */
+static void rules_items_restrict(int competitive) {
+    sRules = competitive ? sRules | NET_RULE_RESTRICT_ITEMS : sRules & ~NET_RULE_RESTRICT_ITEMS;
+}
 
 /* The match's seed. A session is a fresh start of the program on both sides with the same fixed seed (plat_sys.c),
    so the game's random numbers were the same in every session: "Random" at the character select gave the same
@@ -204,6 +238,11 @@ static uint32_t own_options(void) {
     return OPT_MARK | (a > 15 ? 0 : a) | (b > 15 ? 0 : b) << 8; /* (anything else: the defaults) */
 }
 
+int Port_NetOwnCamera(void) {
+    const int camera=(int)(own_options()&255);
+    return camera<=2?camera:0;
+}
+
 static void opts_take(int player, const uint8_t *at) {
     uint32_t v;
     memcpy(&v, at, 4);
@@ -248,6 +287,9 @@ int Port_NetSideOptions(int *camera, int *shake) {
 #define RULE_FAST 0x1000u
 #define RULE_SPEED_SHIFT 16
 #define CAP_MARK 0x43410000u
+#define CAP_ADAPTIVE_TIMING 4u
+#define CAP_RANKED_REQUEUE 8u
+#define TIMING_CONFIG_WORD (8 + NAME_LEN / 4)
 #define NET_SPEED_STANDARD 114
 static int sWantSpeed = NET_SPEED_STANDARD;
 
@@ -275,6 +317,9 @@ static int rules_speed(void) {
 }
 
 int Port_NetSession(void);
+int Port_NetLongBeamClash(void) {
+    return Port_NetSession() && (sRules & LOBBY_LONG_BEAM_CLASH) != 0;
+}
 /* 1000 = the game's own pace; only ever the match's, never the player's own setting. */
 int Port_NetSpeedMilli(void) {
     return Port_NetSession() || Port_NetActive() ? rules_speed() * 10 : 1000;
@@ -286,21 +331,12 @@ void Port_NetRules(int *type, int *dp, int *time) {
     *time = (int)(sRules >> 8 & 15) > 4 ? 3 : (int)(sRules >> 8 & 15);
 }
 
-/* The input delay for a line with this round trip. A blank is 16.7 ms; the other side's input for a blank is
-   entered `delay` blanks ahead and takes half the round trip plus up to a blank (it waits for the next look at
-   the socket) to arrive, so the game runs about ceil(trip / 2 / 16.7 + 1) - delay blanks on guesses. The delay
-   is what keeps that at 4 or under: 1 on a good line (up to about 130 ms), more beyond, 6 at most. */
-static int auto_delay(int rttMs) {
-    int ticks, delay;
-    if (rttMs < 0) {
-        return 2;
-    }
-    {
-        int blankUs = 16683 * 1000 / Port_NetSpeedMilli(); /* (a blank is shorter at 120%) */
-        ticks = (rttMs * 1000 / 2 + blankUs - 1) / blankUs + 1; /* ceil(one way in blanks) + 1 */
-    }
-    delay = ticks - 4;
-    return delay < 1 ? 1 : delay > 6 ? 6 : delay;
+/* With automatic delay, the lobby's rollback choice selects the delay profile. */
+static int auto_delay(int rttMs, int relayed, int rollback) {
+    const NetTimingProfile profile = sOptRoll == -2 ? NET_TIMING_AUTO :
+                                     rollback > 0 ? NET_TIMING_ROLLBACK : NET_TIMING_DELAY;
+    if (rttMs < 0) rttMs = relayed ? 300 : 200;
+    return NetTiming_DelayFrames(rttMs, rules_speed(), profile);
 }
 
 /* Budget one blank for polling and two for relay jitter before using the
@@ -856,6 +892,7 @@ enum { T_SPEC_HELLO = 20, T_SPEC_WAIT = 21, T_SPEC_NO = 22, T_SPEC_SETUP = 23, T
 enum { SPEC_VERSION = 1, SPEC_MAX = 6, SPEC_HEAD = 32, SPEC_PAYLOAD = 1150, SPEC_BURST = 2, SPEC_BUFFER = 60, SPEC_MAX_BLANKS = 1000000 };
 enum { SPEC_NO_VERSION = 1, SPEC_NO_DATA = 2, SPEC_NO_FULL = 3, SPEC_NO_OFF = 4, SPEC_NO_PLAIN = 5, SPEC_NO_PLAYER = 6, SPEC_NO_LOBBY = 7 };
 #define SPEC_QUIET_NS 8000000000ull  /* silent this long: the spectator is gone / the host is gone */
+#define SPEC_STALL_NS 20000000000ull /* host answers, but no new usable input reaches this spectator */
 #define SPEC_ASK_NS 10000000000ull   /* no answer at all this long: nobody hosts there, or a release without spectators */
 #define SPEC_LAG_BLANKS (60u * 60u)   /* a spectator that has been there a minute and is still a minute behind is let go */
 
@@ -1101,7 +1138,7 @@ static void spec_hello(const uint8_t *pkt, int n, const struct sockaddr_in *from
     if (why == 0 && !Port_NetSession()) {
         why = SPEC_NO_PLAIN;
     }
-    if (why == 0 && Lobby_Active() && !Lobby_IsMember(from)) {
+    if (why == 0 && Lobby_Active() && !Lobby_MaySpectate(from)) {
         why = SPEC_NO_LOBBY; /* (a lobby's match is watched by its members, through its owner) */
     }
     if (why != 0) {
@@ -1412,12 +1449,14 @@ static void spec_compare(uint32_t at) {
         sSpecApartAt = at;
         fprintf(stderr, "bt3: net: spectating: this game differs from the host's at blank %u (this copy %016llx, the host %016llx)\n", (unsigned)at,
                 (unsigned long long)mine, (unsigned long long)theirs);
-        if (sSpecResyncs < 1 && Port_SessionCan() && getenv("BT3_SPEC_NORESYNC") == NULL) {
-            sSpecResyncs++;
-            sSpecRejoin = 1; /* followed again from the start (Port_LobbyAuto), once */
+        int mayRetry = Lobby_Active() ? Lobby_SpectatorMayRetry() : sSpecResyncs < 1;
+        if (mayRetry && Port_SessionCan() && getenv("BT3_SPEC_NORESYNC") == NULL) {
+            if (!Lobby_Active()) sSpecResyncs++;
+            sSpecRejoin = 1; /* Follow the same match from the start once. */
             Port_UiNotice("Spectating: this screen no longer shows the players' fight (desync). Following the match again from the start...");
         } else {
             Port_UiNotice("Spectating: this screen no longer shows the players' fight (desync). The players' match is not affected.");
+            if (Lobby_Active()) sSpecLeaveAsked = 1; /* Return to the room without another launch. */
         }
     }
 }
@@ -1678,13 +1717,33 @@ static int receive(void) {
             uint32_t ts;
             int rtt;
             memcpy(&ts, pkt + 8, 4);
-            rtt = (int)(now_ms() - ts);
+            rtt = NetTiming_Receive(&sTimingProbes, ts, now_ms());
             if (rtt >= 0 && rtt < 5000 && (sSetupRtt < 0 || rtt < sSetupRtt)) {
                 sSetupRtt = rtt;
             }
-        } else if (type == T_CONFIG && sMode == 2 && n >= 16) { /* the host's choices, made after it measured the line */
+        } else if (type == T_CONFIG && sMode == 2 && sConnected && n >= 16) {
             uint32_t v[2], ack[2] = {MAGIC, T_CONFIG_ACK};
+            if (sCfgGot == 2) {
+                net_send(ack, sizeof(ack), &from);
+                continue;
+            }
             memcpy(v, pkt + 8, 8);
+            if (sAdaptive) {
+                uint32_t timing[3], version;
+                if (n < (TIMING_CONFIG_WORD + 3) * 4 || v[0] > NET_TIMING_DELAY_LIMIT ||
+                    v[1] < 2 || v[1] > 8 || (v[1] & 1)) continue;
+                memcpy(&version, pkt + 16, 4);
+                if (version != NET_VERSION) continue;
+                memcpy(timing, pkt + TIMING_CONFIG_WORD * 4, sizeof(timing));
+                const int sent = (int)(timing[2] & 255), missed = (int)(timing[2] >> 8);
+                const int validRtt = timing[0] <= timing[1] && timing[1] < NET_TIMING_RTT_LIMIT;
+                if (sent < 1 || sent > NET_TIMING_PROBES || missed > sent ||
+                    (missed == sent ? timing[0] != UINT32_MAX || timing[1] != UINT32_MAX : !validRtt)) continue;
+                sTimingQuality = (NetTimingQuality){validRtt ? (int)timing[0] : -1,
+                                                    validRtt ? (int)timing[1] : -1, missed, sent};
+                sSetupRtt = sTimingQuality.median;
+                sAutoDelay = 1;
+            }
             sCfgDelay = (int)v[0];
             sCfgRoll = (int)v[1];
             if (n >= 24) {
@@ -1735,7 +1794,7 @@ static int receive(void) {
             uint32_t ack[3] = {MAGIC, T_HELLO_ACK, NET_VERSION};
             net_send(ack, sizeof(ack), &from);
         } else if (type == T_HELLO && sMode == 1) {
-            uint32_t ack[8 + NAME_LEN / 4] = {MAGIC, T_HELLO_ACK, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
+            uint32_t ack[TIMING_CONFIG_WORD + 1] = {MAGIC, T_HELLO_ACK, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
             ack[7 + NAME_LEN / 4] = sSeed;
             memcpy(&ack[6], sMyName, NAME_LEN);
             ack[6 + NAME_LEN / 4] = sOpts[0];
@@ -1754,6 +1813,10 @@ static int receive(void) {
                 if ((cap & 0xFFFF0000u) != CAP_MARK) {
                     cap = 0;
                 }
+                if (!sConnected) {
+                    sAdaptive = sAdaptiveOffer && sOptRoll == -2 && sAutoDelay && (cap & CAP_ADAPTIVE_TIMING);
+                    sRankedRequeueSupported = Port_RankedActive() && (cap & CAP_RANKED_REQUEUE);
+                }
                 if (!(cap & 2)) { /* does not know the number: 120% if it knows that and it is that, else 100% */
                     sRules &= ~(0xFFu << RULE_SPEED_SHIFT);
                 }
@@ -1765,7 +1828,9 @@ static int receive(void) {
             memcpy(sNames[0], sMyName, NAME_LEN);
             sPeer = from; /* the host learns the other side's address from its greeting */
             sConnected = 1;
-            net_send(ack, sizeof(ack), &sPeer);
+            ack[TIMING_CONFIG_WORD] = CAP_MARK | (sAdaptive ? CAP_ADAPTIVE_TIMING : 0) |
+                (sRankedRequeueSupported ? CAP_RANKED_REQUEUE : 0);
+            net_send(ack, (TIMING_CONFIG_WORD + (sAdaptive || sRankedRequeueSupported)) * 4, &sPeer);
         } else if (type == T_HELLO_ACK && sMode == 2 && sFromLobby && n < 20) {
             /* an answer to the lobby's greeting, still in the socket the session took over: nothing to do */
         } else if (type == T_HELLO_ACK && sMode == 2) {
@@ -1789,6 +1854,14 @@ static int receive(void) {
                 }
                 if (n >= 32 + NAME_LEN) {
                     memcpy(&sSeed, pkt + 28 + NAME_LEN, 4);
+                }
+                if (n >= (TIMING_CONFIG_WORD + 1) * 4) {
+                    uint32_t cap;
+                    memcpy(&cap, pkt + TIMING_CONFIG_WORD * 4, 4);
+                    if ((cap & 0xFFFF0000u) == CAP_MARK) {
+                        sAdaptive = sAdaptiveOffer && (cap & CAP_ADAPTIVE_TIMING);
+                        sRankedRequeueSupported = Port_RankedActive() && (cap & CAP_RANKED_REQUEUE);
+                    }
                 }
                 memcpy(sNames[1], sMyName, NAME_LEN);
                 sCfgGot = 1;
@@ -2004,6 +2077,10 @@ static void net_start(int role, const char *host, const char *join) {
     sAutoDelay = getenv("BT3_NET_DELAY") != NULL ? strcmp(getenv("BT3_NET_DELAY"), "auto") == 0 : sOptAuto;
     sDelay = getenv("BT3_NET_DELAY") != NULL && !sAutoDelay ? atoi(getenv("BT3_NET_DELAY")) : sOptDelay >= 0 ? sOptDelay : 2;
     sSetupRtt = -1;
+    sAdaptive = 0;
+    sRankedRequeueSupported = sRankedRequeue = sTournamentExit = 0;
+    memset(&sTimingProbes, 0, sizeof(sTimingProbes));
+    sTimingQuality = (NetTimingQuality){-1, -1, 0, 0};
     sCfgAcked = 0;
     if (sDelay < 0) { sDelay = 0; }
     if (sDelay > 30) { sDelay = 30; }
@@ -2028,7 +2105,12 @@ static void net_start(int role, const char *host, const char *join) {
     /* BT3_NET_ROLLBACK=<n>: the game does not wait for the other player's input; it goes on with a guess (what
        they held last) for up to n blanks and, when the real input differs, goes back and runs those blanks again
        (roll_tick). Needs the roll ring of gs/state.c (the 64-bit programs); 0 or unset: wait, as before. */
-    sRollMax = !Port_RollCan() ? 0 : getenv("BT3_NET_ROLLBACK") != NULL ? atoi(getenv("BT3_NET_ROLLBACK")) : sOptRoll >= 0 ? sOptRoll : 0;
+    const char *rollOption = getenv("BT3_NET_ROLLBACK"), *delayOption = getenv("BT3_NET_DELAY");
+    const int automaticRoll = rollOption && strcmp(rollOption, "auto") == 0;
+    if (automaticRoll) sOptRoll = -2;
+    sAdaptiveOffer = Port_RollCan() && (!rollOption || automaticRoll) && (!delayOption || sAutoDelay) && sOptRoll < 0;
+    sRollMax = !Port_RollCan() ? 0 : rollOption && !automaticRoll ? atoi(rollOption) :
+        sOptRoll == -2 ? 4 : sOptRoll >= 0 ? sOptRoll : 0;
     if (sRollMax < 0) { sRollMax = 0; }
     if (sRollMax > 30) { sRollMax = 30; }
     sChecked = sLive = 0;
@@ -2153,7 +2235,8 @@ static void net_start(int role, const char *host, const char *join) {
             uint32_t hello[5 + NAME_LEN / 4] = {MAGIC, T_HELLO, NET_VERSION};
             memcpy(&hello[3], sMyName, NAME_LEN);
             hello[3 + NAME_LEN / 4] = sOpts[1];
-            hello[4 + NAME_LEN / 4] = CAP_MARK | 3;
+            hello[4 + NAME_LEN / 4] = CAP_MARK | 3 | (sAdaptiveOffer ? CAP_ADAPTIVE_TIMING : 0) |
+                (Port_RankedActive() ? CAP_RANKED_REQUEUE : 0);
             fprint_send(&sPeer);
             net_send(hello, sizeof(hello), &sPeer);
             if (sJoinAlt.sin_port != 0) {
@@ -2185,25 +2268,33 @@ static void net_start(int role, const char *host, const char *join) {
             exit(2);
         }
     }
-    /* Setting up. The host measures the round trip (a dozen pings, the smallest counts), chooses the input delay
-       from it if that is automatic, and tells the other side its choices until that side has them; the other
-       side answers the pings and waits for the choices. */
+    /* Measure on the connected gameplay route, then agree on one delay and
+       prediction limit before either player sends inputs. */
     if (sMode == 3) {
         Port_UiBanner(NULL, 0);
     } else if (sMode == 1) {
         uint64_t start = SDL_GetTicksNS(), lastPing = 0, lastCfg = 0;
-        int pings = 0;
-        uint64_t measureNs = 400000000ull;
-        if (sFromLobby && Port_LobbyRelayed()) measureNs = 1600000000ull;
+        const int relayed = sFromLobby && Port_LobbyRelayed();
+        const int probeLimit = sAdaptive ? NET_TIMING_PROBES : 12;
+        const uint64_t measureNs = sAdaptive ? (relayed ? 1750000000ull : 1300000000ull) :
+            (relayed ? 1600000000ull : 400000000ull);
         while (SDL_GetTicksNS() - start < measureNs) {
             uint64_t now = SDL_GetTicksNS();
-            if (now - start >= 400000000ull && sSetupRtt >= 0) break;
-            if (pings < 12 && now - lastPing >= 25000000ull) {
+            if (sAdaptive && sTimingProbes.sent == probeLimit) {
+                if (sTimingProbes.received == probeLimit) break;
+                if (sTimingProbes.received >= 8) {
+                    const NetTimingQuality running = NetTiming_Summarize(&sTimingProbes);
+                    if (now - lastPing >= (uint64_t)(running.p90 + (relayed ? 210 : 150)) * 1000000ull) break;
+                }
+            } else if (!sAdaptive && now - start >= 400000000ull && sSetupRtt >= 0) {
+                break;
+            }
+            if (sTimingProbes.sent < probeLimit && now - lastPing >= 25000000ull) {
                 uint32_t ping[3] = {MAGIC, T_PING, now_ms()};
+                NetTiming_Send(&sTimingProbes, ping[2]);
                 send_to_peer(ping, (int)sizeof(ping));
                 fprint_send(&sPeer);
                 lastPing = now;
-                pings++;
             }
             receive();
             session_hold();
@@ -2212,10 +2303,17 @@ static void net_start(int role, const char *host, const char *join) {
             }
             SDL_Delay(1);
         }
-        if (sAutoDelay) {
-            sDelay = auto_delay(sSetupRtt);
+        if (sAdaptive) {
+            sTimingQuality = NetTiming_Summarize(&sTimingProbes);
+            const NetTimingSettings settings = NetTiming_Choose(sTimingQuality, rules_speed(), relayed);
+            sDelay = settings.delay;
+            sRollMax = settings.rollback;
+            sSetupRtt = sTimingQuality.median;
+        } else if (sAutoDelay) {
+            sSetupRtt = NetTiming_Summarize(&sTimingProbes).median;
+            sDelay = auto_delay(sSetupRtt, relayed, sRollMax);
         }
-        if (sFromLobby && Port_LobbyRelayed() && getenv("BT3_NET_DELAY") == NULL) {
+        if (!sAutoDelay && relayed && getenv("BT3_NET_DELAY") == NULL) {
             const int floor = relay_delay_floor(sSetupRtt, rules_speed(), sRollMax);
             if (sDelay < floor) sDelay = floor;
             fprintf(stderr, "bt4: relay timing: rtt_ms=%d speed=%d delay=%d rollback=%d\n",
@@ -2226,11 +2324,14 @@ static void net_start(int role, const char *host, const char *join) {
         while (!sCfgAcked && SDL_GetTicksNS() - start < 3000000000ull) {
             uint64_t now = SDL_GetTicksNS();
             if (now - lastCfg >= 50000000ull) {
-                uint32_t cfg[8 + NAME_LEN / 4] = {MAGIC, T_CONFIG, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
+                uint32_t cfg[TIMING_CONFIG_WORD + 3] = {MAGIC, T_CONFIG, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
                 cfg[7 + NAME_LEN / 4] = sSeed;
                 memcpy(&cfg[6], sMyName, NAME_LEN);
                 cfg[6 + NAME_LEN / 4] = sOpts[0];
-                net_send(cfg, sizeof(cfg), &sPeer);
+                cfg[TIMING_CONFIG_WORD] = (uint32_t)sTimingQuality.median;
+                cfg[TIMING_CONFIG_WORD + 1] = (uint32_t)sTimingQuality.p90;
+                cfg[TIMING_CONFIG_WORD + 2] = (uint32_t)sTimingQuality.sent | (uint32_t)sTimingQuality.missed << 8;
+                net_send(cfg, (TIMING_CONFIG_WORD + (sAdaptive ? 3 : 0)) * 4, &sPeer);
                 fprint_send(&sPeer); /* (again with each: the other side refuses a match it had none for, FP_PEER_REQUIRED) */
                 lastCfg = now;
             }
@@ -2256,13 +2357,23 @@ static void net_start(int role, const char *host, const char *join) {
             SDL_Delay(1);
         }
     }
+    if (sAdaptive && (sMode == 1 ? !sCfgAcked : sCfgGot != 2)) {
+        fprintf(stderr, "bt4: net: adaptive timing setup did not finish\n");
+        Port_UiNotice("Could not agree on connection settings. Try joining again.");
+        if (sSession) Port_NetLeave();
+        exit(2);
+    }
     if (sMode == 2 && sCfgGot) { /* the host's choices, unless this side was started with its own */
         if ((getenv("BT3_NET_DELAY") == NULL || sAutoDelay) && sCfgDelay >= 0 && sCfgDelay <= 30) {
             sDelay = sCfgDelay;
         }
-        if (getenv("BT3_NET_ROLLBACK") == NULL && sOptRoll < 0 && sCfgRoll >= 0 && sCfgRoll <= 30) {
+        if ((!rollOption || automaticRoll) && sOptRoll < 0 && sCfgRoll >= 0 && sCfgRoll <= 30) {
             sRollMax = Port_RollCan() ? sCfgRoll : 0;
         }
+    }
+    if (sAdaptive) {
+        fprintf(stderr, "bt4: net: adaptive timing: rtt_p50_ms=%d rtt_p90_ms=%d missed=%d/%d delay=%d rollback=%d\n",
+                sTimingQuality.median, sTimingQuality.p90, sTimingQuality.missed, sTimingQuality.sent, sDelay, sRollMax);
     }
     if (sMode != 3 && !sDataBad && !sFpHeard && fp_required()) {
         /* none has come: given a second more (it travels with the greetings, the pings and the host's choices, so
@@ -2676,6 +2787,14 @@ static void session_banner(void) {
         }
     }
     banner_fill(text, sizeof(text), PortOnline_Text(line), name, region, ms);
+    if(Port_RankedActive()){
+        int points=Port_RankedRivalPoints(name);
+        if(points>=0){
+            k=strlen(text);
+            if(k+1<sizeof(text))text[k++]='\n';
+            snprintf(text+k,sizeof(text)-k,PortOnline_Text("Ranked points: %d"),points);
+        }
+    }
     if (ms >= 0) { /* the round trip, as measured once the two are connected */
         char more[96];
         line = MenuTranslation_PortText("net/round_trip");
@@ -2872,7 +2991,8 @@ static void spec_tick(unsigned tick) {
     }
     sSpecNudge = 0;
     if (tick >= sLogN) { /* nothing to run this blank with: wait until it has its lead again, a longer one from now */
-        uint64_t t0 = now;
+        uint64_t t0 = now, lastProgress = now;
+        unsigned lastLog = sLogN;
         int said = 0;
         if (tick > 1800) { /* (not the first wait, at the character select: the host's blanks were only beginning) */
             sSpecLead = sSpecLead + SPEC_LEAD_STEP < SPEC_BUFFER ? sSpecLead + SPEC_LEAD_STEP : SPEC_BUFFER;
@@ -2890,6 +3010,17 @@ static void spec_tick(unsigned tick) {
             }
             if (at > sSpecHeardNs && at - sSpecHeardNs > SPEC_QUIET_NS) {
                 ended("The connection to the host was lost.", tick);
+            }
+            if (sSpecLeaveAsked) {
+                sSpecLeaveAsked = 0;
+                sSpecNoticed = 1;
+                Port_NetLeave();
+            }
+            if (sLogN != lastLog) {
+                lastLog = sLogN;
+                lastProgress = at;
+            } else if (at - lastProgress >= SPEC_STALL_NS) {
+                ended("Spectating could not catch up. You can watch the next match from the lobby.", tick);
             }
             if (at - t0 > 250000000ull) {
                 said = 1;
@@ -2932,13 +3063,16 @@ static void spec_tick(unsigned tick) {
     }
 }
 
+extern void Port_UiRankedSettlement(int rating,int delta);
 static void ranked_outcome(unsigned tick){
     extern int Port_BattleOutcome(int *);
     extern int Port_RankedPauseAbortPad(void);
+    extern unsigned Port_RankedRockEvent(void);
     static int notified;
     if(sMode!=3&&sSession&&!sResim&&!gPortResim){
         int bits=0,state=Port_BattleOutcome(&bits);
         Port_OnlineDuelObserve(state,bits,tick,sRollMax>0?sChecked:tick,0,sSeed,sNames[0],sNames[1]);
+        Port_RankedObserveRock(state,Port_RankedRockEvent(),tick,sRollMax>0?sChecked:tick);
     }
     if(sMode!=3&&sSession&&Port_RankedActive()){
         int bits=0,state=Port_BattleOutcome(&bits);
@@ -2946,10 +3080,10 @@ static void ranked_outcome(unsigned tick){
         Port_RankedObserve(state,bits,tick,sRollMax>0?sChecked:tick,sResim||gPortResim,abortPad<0?-1:abortPad==sMe);
         if(!sResim&&!gPortResim){
             int rating=0,delta=0,result=Port_RankedResult(&rating,&delta);
-            if(result!=2)notified=0;
-            else if(!notified){
-                char line[128];snprintf(line,sizeof(line),PortOnline_Text("Ranked: %+d points (%d total)"),delta,rating);
-                Port_UiBanner(line,2000);notified=1;
+            if(result!=2&&result!=3)notified=0;
+            else if(result==2&&!notified){
+                Port_UiRankedSettlement(rating,delta);
+                notified=1;
             }
         }
     }
@@ -2958,12 +3092,8 @@ void Port_NetBeginTick(unsigned tick) {
     uint64_t t0, last;
 
     if (!Port_NetActive()) {
-        int rating,delta;
-        if(Port_RankedTakeSettlement(&rating,&delta)){
-            char line[128];
-            snprintf(line,sizeof(line),PortOnline_Text("Ranked: %+d points (%d total)"),delta,rating);
-            Port_UiBanner(line,2000);
-        }
+        int rating,delta,result=Port_RankedTakeSettlement(&rating,&delta);
+        if(result==1)Port_UiRankedSettlement(rating,delta);
         return;
     }
     sTick = tick;
@@ -3252,6 +3382,12 @@ int Port_NetSession(void) {
     return Port_NetActive() && sSession;
 }
 
+/* The host's rules word is delivered to players and spectators alike. A
+ * private match must not depend on another machine's matchmaking UI state. */
+int Port_NetItemsRestricted(void) {
+    return Port_NetSession() && (sRules & NET_RULE_RESTRICT_ITEMS) != 0;
+}
+
 /* For the game's start-up (src/menu/menu_i_c.c, menu_a_c.c): 1 when it has to be the game's own whatever the
    player's settings say, which is in every session. BT3_TEST_OWN_START=1 (testing the check above): this copy
    follows its settings in a session too, as 0.1.32 and 0.1.33 did. */
@@ -3315,9 +3451,14 @@ int Port_NetSessionsEnded(void) {
 }
 
 void Port_NetSessionEnd(void) {
+    int wasLobby = Lobby_Active();
+    int keepLobby;
+
     sSessionsEnded++;
     sRivalRegion[0] = '\0';
-    if (Lobby_SessionEnded()) { /* a lobby's match: the lobby goes on, with its socket, its relay and its room code */
+    keepLobby = Lobby_SessionEnded(sMode == 3 && sSpecRejoin);
+    if (wasLobby) sSpecRejoin = 0;
+    if (keepLobby) { /* the lobby keeps its socket, relay and room code */
         sMode = 0;
         sSession = 0;
         sConnected = 0;
@@ -3490,6 +3631,9 @@ int Port_LobbyStart(int host, const char *address, int port) {
         sLobby = -1;
         return sLobby;
     }
+    /* A new private/address room cannot inherit a previous queue's policy.
+     * StartCode reapplies the competitive flag for Quick Match and Ranked. */
+    rules_items_restrict(0);
     if (sHandSock >= 0) { /* (a session that was asked for and never began) */
         closesocket(sHandSock);
         sHandSock = -1;
@@ -3659,6 +3803,7 @@ int Port_LobbyStartCode(int host, const char *code) {
     sKnockGen = -1;
     memset(sKnockUntil, 0, sizeof(sKnockUntil));
     snprintf(sCodeAsked, sizeof(sCodeAsked), "%s", sQuickQueue < 0 && code != NULL ? code : "");
+    rules_items_restrict(sQuickQueue >= 0);
     Match_Begin(sQuickQueue >= 0 ? 3 : sWatchByCode ? 4 : sLobbyRole, sSock, sCodeLocalPort, sQuickQueue >= 0 ? kMatchQueues[sQuickQueue] : code, sMyName, NET_VERSION);
     return sLobby;
 }
@@ -3699,6 +3844,18 @@ int Port_LobbyWiden(void) {
     return st.widen;
 }
 
+void Port_LobbyDirectory(Bt4PublicDirectory *out) {
+    extern int Port_BuildIdentity(unsigned long long *);
+    extern int Port_TagDataFingerprint(unsigned long long *);
+    unsigned long long content,tag;
+    if(Port_BuildIdentity(&content)!=1||Port_TagDataFingerprint(&tag)!=1){
+        memset(out,0,sizeof(*out));out->state=-1;return;
+    }
+#ifdef BT4_TAG_TEAM_EXPANDED
+    tag^=0x54434f3300000000ULL;
+#endif
+    Bt4Discovery_Directory(NET_VERSION,content,tag,out);
+}
 void Port_LobbyQueuesAsk(void) { Match_QueuesAsk(NET_VERSION); }
 void Port_LobbyHelloAsk(void) { Match_HelloAsk(); }
 int Port_LobbyRelease(int *min, int *latest) { return Match_Release(min, latest); }
@@ -4034,9 +4191,6 @@ void Port_LobbyAuto(void) {
     if (!Port_NetSession()) {
         Lobby_Pump(); /* (the eight-place lobby, outside its matches: net_lobby.c) */
     }
-    if (sSpecRejoin && !Port_NetSession() && Lobby_Active()) {
-        sSpecRejoin = 0; /* (a lobby's spectator is sent to the match again by the owner) */
-    }
     if (sSpecRejoin && !Port_NetSession()) { /* a spectator whose game came apart from the host's: from the start again */
         char addr[160], *colon;
         sSpecRejoin = 0;
@@ -4069,7 +4223,7 @@ void Port_LobbyAuto(void) {
             Port_NetSpeedSet(NET_SPEED_STANDARD);
             Port_NetRulesSet(type, dp, 4); /* (a queue's rules: its battle type, no time limit, 120%) */
             if (getenv("BT3_NET_ROLLBACK") == NULL && getenv("BT3_NET_DELAY") == NULL) {
-                Port_NetOptions(Port_RollCan() ? 4 : 0, -2); /* (and a quick match's fixed rollback and delay, as the window sets them) */
+                Port_NetAutomaticOptions();
             }
             Port_LobbyQuickArea(getenv("BT3_QUICK_AREA")); /* (testing: "auto", "any", or a region such as "EU") */
             Port_LobbyStartQuick(q);
@@ -4153,6 +4307,15 @@ int Port_NetStats(int *out) {
     out[7] = sAutoDelay;
     out[8] = sShown[5];        /* why this copy waited in the last second (WHY_*), 0 for no wait worth naming */
     out[9] = (int)sApartAt;    /* the blank at which the two games came apart, 0 for not */
+    return 1;
+}
+
+int Port_NetTimingStats(int *out) {
+    if (!sAdaptive || sMode <= 0 || sMode == 3 || !sConnected || !sTimingQuality.sent) return 0;
+    out[0] = sTimingQuality.median;
+    out[1] = sTimingQuality.p90;
+    out[2] = sTimingQuality.missed;
+    out[3] = sTimingQuality.sent;
     return 1;
 }
 
@@ -4393,4 +4556,8 @@ int NetIo_Connected(void) {
 int Port_NetLobbyOwnerSide(void) {
     uint32_t v = sRules >> 24 & 15;
     return Port_NetSession() && v >= 1 && v <= 3 ? (int)v - 1 : -1;
+}
+
+int Port_NetTournamentResult(void) {
+    return Port_NetLobbyOwnerSide() >= 0 && (sRules & LOBBY_TOURNAMENT_RESULT) != 0;
 }

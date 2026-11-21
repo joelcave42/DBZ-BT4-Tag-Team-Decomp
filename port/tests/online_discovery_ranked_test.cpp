@@ -2,30 +2,74 @@
 #include <SDL3/SDL.h>
 #include <cassert>
 #include <iostream>
+#include "../src/gs/net_timing.h"
 #include "../src/gs/supabase_signal.cpp"
 struct CapturedCommand {unsigned serial;std::string op;Sj args;};
 static std::vector<CapturedCommand> capturedCommands;
 static int CaptureDiscoveryCommand(int,unsigned id,const char *op,const char *args){
     capturedCommands.push_back({id,op,Sj::parse(args)});return 1;
 }
+static int CaptureDiscoveryOpen(){return 1;}
 #define Bt4Signal_Command CaptureDiscoveryCommand
+#define Bt4Signal_Open CaptureDiscoveryOpen
 #include "../src/gs/match_supabase.cpp"
+#undef Bt4Signal_Open
 #undef Bt4Signal_Command
 
 extern "C" void PortVoice_P2PSession(int,const char*,const PortVoiceRoomMember*,int){}
 extern "C" int Update_FetchOnlineRoute(char*,size_t){return 0;}
 extern "C" void Update_SetOnlineRequired(int){}
 extern "C" int Update_OnlineRequired(void){return 0;}
+static std::string rockFinder;
+static unsigned rockStars,rockNotices;
+extern "C" void Port_UiDragonBallFound(const char* finder,unsigned stars){
+    rockFinder=finder;rockStars=stars;++rockNotices;
+}
 
 extern "C" int Port_BattleRoster(int side,int *ids,int){ids[0]=side?310:187;return 1;}
 int main(){
     assert(SDL_Init(0));
-    assert(!Bt4Room_IsIdleMs(1799999,0));
-    assert(Bt4Room_IsIdleMs(1800000,0));
-    assert(!Bt4Room_IsIdleMs(1800000,1000));
+    assert(!Bt4Room_IsIdleMs(3599999,0));
+    assert(Bt4Room_IsIdleMs(3600000,0));
+    assert(!Bt4Room_IsIdleMs(3600000,1000));
     assert(!Bt4Room_IsIdleMs(999,1000));
-    assert(!Bt4Room_IsIdleNs(UINT64_C(1799999999999),0));
-    assert(Bt4Room_IsIdleNs(UINT64_C(1800000000000),0));
+    assert(!Bt4Room_IsIdleNs(UINT64_C(3599999999999),0));
+    assert(Bt4Room_IsIdleNs(UINT64_C(3600000000000),0));
+    NetTimingProbes probes{};
+    for(unsigned i=0;i<NET_TIMING_PROBES;++i) NetTiming_Send(&probes,1000+i*30);
+    for(int i=14;i>=0;--i){
+        const uint32_t sent=1000+i*30, received=sent+(i<12?190:210);
+        assert(NetTiming_Receive(&probes,sent,received)==(i<12?190:210));
+        assert(NetTiming_Receive(&probes,sent,received)==-1);
+    }
+    assert(NetTiming_Receive(&probes,12,15)==-1);
+    const auto measured=NetTiming_Summarize(&probes);
+    assert(measured.median==190&&measured.p90==210&&measured.sent==16&&measured.missed==1);
+    const auto distant=NetTiming_Choose(measured,114,0), local=NetTiming_Choose({20,24,0,16},114,0);
+    const auto relay=NetTiming_Choose({266,310,3,16},114,1), severe=NetTiming_Choose({1200,1600,7,16},114,1);
+    assert(local.delay==1&&local.rollback==2);
+    assert(distant.delay==7&&distant.rollback==4);
+    assert(relay.delay==10&&relay.rollback==6);
+    assert(severe.delay==14&&severe.rollback==8);
+    const int maxima[] = {16,33,50,66,83,100,116,133,150,166,183,200,216,233,250,266,283,300,316,333,5000};
+    const int delays[][3] = {
+        {0,0,8},{0,8,17},{8,17,25},{8,25,33},{17,33,42},{17,42,50},{25,50,58},
+        {25,58,67},{33,67,75},{33,75,83},{42,83,100},{50,100,117},{58,108,125},
+        {67,125,142},{75,142,158},{83,150,175},{92,167,183},{100,175,200},
+        {108,183,208},{117,192,225},{125,200,233}
+    };
+    int first = 0;
+    for (unsigned i = 0; i < sizeof(maxima) / sizeof(maxima[0]); ++i) {
+        for (int j = 0; j < 3; ++j) {
+            const auto profile = static_cast<NetTimingProfile>(j);
+            assert(NetTiming_DelayMs(first,profile)==delays[i][j]);
+            assert(NetTiming_DelayMs(maxima[i],profile)==delays[i][j]);
+        }
+        first = maxima[i] + 1;
+    }
+    assert(NetTiming_Choose({0,0,0,16},114,0).delay==0);
+    assert(NetTiming_DelayFrames(16,100,NET_TIMING_DELAY)==1);
+    assert(NetTiming_DelayFrames(334,200,NET_TIMING_DELAY)==28);
     watchQuit=true; // run the liveness state machine deterministically below
     Bt4Signal_Listen(4,1);profileRoute();rankedStatusRequest=1;rankedTopRequest=2;
     emit(4,{{"event","reply"},{"serial",1u},{"body",{{"enabled",true},{"season","2026-11-01"},{"rating",1234u},{"wins",3u},{"losses",1u}}}});
@@ -53,6 +97,22 @@ int main(){
     rankedTopRequest=3;
     emit(4,{{"event","reply"},{"serial",3u},{"body",{{"entries",Dj::array()}}}});
     Port_RankedView(&v);assert(v.count==0&&v.pages==1);
+    rankedStatusRequest=4;
+    emit(4,{{"event","reply"},{"serial",4u},{"body",{{"enabled",true},{"season","2026-11-01"},
+        {"scoring","streak"},{"monthly_reset",true},{"dragon_balls",4u},{"ranked_rocks",true},
+        {"collection_position",0u},{"forfeit_penalty",100u},{"next_reset_at","2026-12-01T03:00:00.000Z"}}}});
+    Port_RankedView(&v);assert(v.monthlyReset&&v.streakScoring&&v.dragonBalls==4&&rankedRocksAvailable);
+    assert(!strcmp(v.nextReset,"2026-12-01T03:00:00.000Z"));
+    assert(v.forfeitPenalty==100);
+    rankedTopRequest=5;
+    emit(4,{{"event","reply"},{"serial",5u},{"body",{{"season","2026-11-01"},{"entries",Dj::array({{{"name","Winner"},{"dragon_balls",999u}}})}}}});
+    Port_RankedView(&v);assert(v.count==1&&v.top[0].dragonBalls==7);
+    rankedStatusRequest=6;
+    emit(4,{{"event","reply"},{"serial",6u},{"body",{{"enabled",true},{"season","2026-12-01"},{"monthly_reset",true},{"dragon_balls",4u}}}});
+    Port_RankedView(&v);assert(v.count==0&&rankedTopRequest==0&&nextRankedTop==0&&v.dragonBalls==4);
+    rankedTopRequest=7;
+    emit(4,{{"event","reply"},{"serial",7u},{"body",{{"season","2026-11-01"},{"entries",Dj::array({{{"name","Stale winner"}}})}}}});
+    Port_RankedView(&v);assert(v.count==0&&nextRankedStatus==0);
     char nickname[20];
     Port_OnlineNicknameBegin();assert(Port_OnlineNicknameView(nickname)==BT4_NICKNAME_LOADING);
     emit(4,{{"event","reply"},{"serial",nicknameRequest},{"body",{{"state","required"}}}});
@@ -63,6 +123,13 @@ int main(){
     Port_OnlineNicknameSubmit("Blue Phoenix");
     emit(4,{{"event","reply"},{"serial",nicknameRequest},{"body",{{"state","ready"},{"name","Blue Phoenix"}}}});
     assert(Port_OnlineNicknameView(nickname)==BT4_NICKNAME_READY&&!strcmp(nickname,"Blue Phoenix"));
+    Port_OnlineNicknameBegin();Port_OnlineNicknameView(nickname);
+    emit(4,{{"event","reply"},{"serial",nicknameRequest},{"body",{{"error","RATE_LIMITED"}}}});
+    assert(Port_OnlineNicknameView(nickname)==BT4_NICKNAME_UNAVAILABLE&&!nicknameRequest);
+    nextNicknameCheck=0;Port_OnlineNicknameView(nickname);
+    assert(nicknameRequest&&capturedCommands.back().op=="nickname_get");
+    emit(4,{{"event","reply"},{"serial",nicknameRequest},{"body",{{"state","ready"},{"name","Blue Phoenix"}}}});
+    assert(Port_OnlineNicknameView(nickname)==BT4_NICKNAME_READY);
     assert(!Bt4Signal_Command(0,50,"ranked_top","{}"));
     assert(!Bt4Signal_Command(4,51,"create","{}"));
     Bt4Signal_Listen(4,0);
@@ -160,6 +227,22 @@ int main(){
     assert(rankedWatches.empty()&&Port_RankedTakeSettlement(&rating,&delta)&&rating==1032&&delta==16);
     assert(!Bt4Signal_Command(0,52,"ranked_forfeit","{}"));
     assert(!Bt4Signal_Command(5,53,"create","{}"));
+    // A pending normal result must not prevent attribution when the opponent disappears.
+    rankedWatches.clear();capturedCommands.clear();d.sawFight=false;d.reportSerial=0;
+    d.reportState=0;d.outcomeBits=0;d.reportPending=false;nextSettlement=0;
+    Port_RankedObserve(3,0,350,350,0,-1);
+    Port_RankedObserve(4,1,351,351,0,-1);Port_RankedObserve(4,1,375,375,0,-1);
+    assert(d.reportSerial&&rankedWatches.size()==1&&rankedWatches[0].until);
+    assert(!rankedWatches[0].peerGone&&!rankedWatches[0].concede);
+    Port_RankedDisconnected(1);
+    assert(rankedWatches[0].peerGone&&rankedWatches[0].notify&&!rankedWatches[0].concede);
+    watchStep(now+20);
+    assert(capturedCommands.back().op=="ranked_heartbeat"&&capturedCommands.back().args["peer_gone"]==true);
+    reply({{"state","applied"},{"rating",1045},{"delta",13}});watchStep(now+21);
+    assert(Port_RankedTakeSettlement(&rating,&delta)&&rating==1045&&delta==13);
+    assert(!Port_RankedTakeSettlement(&rating,&delta));
+    // A duplicate shared teardown does not turn a remote failure into our concession.
+    Port_RankedDisconnected(0);assert(rankedWatches.empty());
     // The actual non-ranked adapter snapshots both sides, retries independently,
     // and allocates a new key for a rematch rather than replacing the selection.
     capturedCommands.clear();d.ranked=false;duelFight=false;duelFinished=false;
@@ -189,8 +272,39 @@ int main(){
     Port_OnlineTagObserve(&room,descriptor.c_str(),4,2);
     assert(characterReports.back().args["chars_a"][0]==200&&characterReports.back().args["outcome"]==1);
     characterReports.clear();
+    capturedCommands.clear();d.on=true;d.ranked=true;d.sawFight=true;rankedRockSeed=42;
+    d.descriptor=Dj{{"generation","ranked-find"}};
+    const unsigned found=514;
+    Port_RankedObserveRock(3,found,500,498);
+    assert(rankedRockProofs.empty()); // predicted hit, still subject to rollback
+    Port_RankedObserveRock(3,0,501,500);
+    assert(rankedRockProofs.empty()); // the predicted hit disappeared
+    Port_RankedObserveRock(3,found,502,501);
+    Port_RankedObserveRock(3,found,503,502);
+    Port_RankedObserveRock(3,found,504,503);
+    assert(rankedRockProofs.size()==1);
+    const auto proofAt=rankedRockProofs.front().next;
+    watchStep(proofAt);
+    assert(capturedCommands.size()==1&&capturedCommands.back().op=="ranked_rock");
+    assert(capturedCommands.back().args["event"]==found);
+    const unsigned rockRequest=rankedRockProofs.front().request;
+    emit(5,{{"event","reply"},{"serial",rockRequest},{"body",{{"state","applied"},{"ball",0u},{"finder","Beta"},{"stars",4u}}}});
+    watchStep(proofAt+1);
+    assert(rankedRockProofs.empty()&&rockFinder=="Beta"&&rockStars==4&&rockNotices==1);
+    d.ranked=d.rockSubmitted=false;d.quick=true;d.rockCandidate=0;
+    d.descriptor=Dj{{"generation","quick-find"}};
+    Port_RankedObserveRock(3,found,600,600);
+    assert(rankedRockProofs.size()==1);
+    watchStep(rankedRockProofs.front().next);
+    assert(capturedCommands.back().op=="quick_rock"&&capturedCommands.back().args["match"]=="quick-find");
+    Port_RankedObserveRock(4,found,601,601);
+    Port_RankedObserveRock(0,0,602,602);
+    assert(Port_RankedRockSeed()==0);
     Port_RankedShutdown();Bt4Signal_Listen(5,0);
     rankedActive=false;
+    capturedCommands.clear();Port_RankedSearch(1);
+    assert(Bt4Discovery_Begin(d.generation+1,3,1,123,"Admission","","[\"127.0.0.1:1\"]","S"));
+    assert(capturedCommands.back().op=="ranked_queue"&&capturedCommands.back().args["abandonment_version"]==2);
     Bt4Signal_Listen(0,0);
     assert(!state.thread&&state.jobs.empty());
     SDL_Quit();

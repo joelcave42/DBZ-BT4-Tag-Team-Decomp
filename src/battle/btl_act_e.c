@@ -67,6 +67,7 @@ extern f32 BtlOpp_GetClosingTime(BtlActEChr *chr);
 extern s32 BtlInput_IsPressed(BtlActEChr *chr, u32 mask);
 extern void BtlCharSnd_PlayCommonFar(BtlActEChr *chr, s32 id);
 extern void BtlChar_RequestPlaceOnPath(BtlActEChr *chr);
+extern void ChrCam_EndCut(BtlActEChr *chr);
 extern void BtlAnim_EnableHandle(BtlActEChr *chr);
 extern s32 BtlAct_GetRequested(BtlActEChr *chr);
 
@@ -1364,6 +1365,10 @@ void BtlAct_ClashBlowsHandler(BtlActEChr *chr, s32 phase) {
                 BtlAnim_AdvanceLoop(chr, 0);
                 BtlChar_SetFlag(chr, 0x13C);
                 BtlChar_SetFlag(chr, 0xED);
+#ifdef BT4_TAG_TEAM_EXPANDED
+                {extern s32 TagFusion_ClashExtra(s32,s32);
+                 if(TagFusion_ClashExtra(chr->player,0x4F))BtlAct_CountAndMarkOpponent(chr);}
+#endif
                 if (BtlInput_TestAction(chr, 0x4F, 1)) {
                     BtlAct_CountAndMarkOpponent(chr);
 #ifdef PORT /* PC build: BT3_CLASH_LOG=1 */
@@ -1500,7 +1505,8 @@ s32 BtlAct_ClashVanishHandler(BtlActEChr *chr, s32 phase) {
  * The sequence answers with flags 0xC5 (again), 0xC6 (over), 0xC7 (won) and 0xC8 (lost).
  */
 s32 BtlAct_ClashExchangeHandler(BtlActEChr *chr, s32 phase) {
-    BtlActEClashC *c = &gBtlChars->clashC;
+    extern void *TagClash_GetExchange(s32);
+    BtlActEClashC *c = TagClash_GetExchange(chr->player);
     s32 *counter = &chr->work[2];
     s32 wait;
     f32 duration;
@@ -1585,7 +1591,12 @@ s32 BtlAct_ClashExchangeHandler(BtlActEChr *chr, s32 phase) {
                 if (chr->actionFrame > 0) {
                     BtlChar_SetFlag(chr, c->pick + 0xE9);
                     if (chr->unkE58 == -1) {
-                        if (BtlInput_IsPressed(chr, 0x78000000)) {
+#ifdef BT4_TAG_TEAM_EXPANDED
+                        extern s32 TagFusion_ClashChoice(s32,s32,s32);
+                        s32 shared=TagFusion_ClashChoice(chr->player,c->pick,c->prevPick);
+                        if(shared>0)chr->unkE58=chr->actionFrame;
+#endif
+                        if (chr->unkE58==-1 && BtlInput_IsPressed(chr, 0x78000000)) {
                             if (BtlInput_IsPressed(chr, 0x8000000 << c->pick) &&
                                 !BtlInput_IsPressed(chr, 0x78000000 ^ (0x8000000 << c->pick))) {
                                 chr->unkE58 = chr->actionFrame;
@@ -1596,6 +1607,9 @@ s32 BtlAct_ClashExchangeHandler(BtlActEChr *chr, s32 phase) {
                                 chr->unkE58 = -2;
                             }
                         }
+#ifdef BT4_TAG_TEAM_EXPANDED
+                        if(chr->unkE58==-1 && shared<0)chr->unkE58=-2;
+#endif
                     }
                 }
                 BtlChar_SetFlag(chr, 0x18);
@@ -1649,6 +1663,10 @@ s32 BtlAct_ClashExchangeHandler(BtlActEChr *chr, s32 phase) {
     if (phase == 3) {
         if (BtlAct_GetRequested(chr) != 0xFC) {
             chr->clashCountB = 0;
+            /* A cancelled QTE must not retain its vanished/placement state. */
+            BtlChar_ClearFlag(chr,0xB);BtlChar_ClearFlag(chr,0xE);
+            BtlChar_ClearFlagRange(chr,0xC4,0xC8);
+            ChrCam_EndCut(chr);
         }
     }
 }

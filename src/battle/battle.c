@@ -9,6 +9,7 @@ extern int TagBattle_Active(void);
 #include "sys/job.h"
 #include "sys/pad.h"
 #include "sys/game_pad.h"
+#include "battle/training.h"
 #include "menu/port_screen.h"
 #include "menu/tbo_art.h"
 
@@ -18,6 +19,69 @@ extern int TagBattle_Active(void);
 extern s32 *BtlMember_GetActiveGauge(void *);
 extern s32 BtlSeq_GetState(void);
 #include "dev_rules.inc"
+#ifdef BT4_TAG_TEAM_EXPANDED
+#include "tag_team_assist.inc"
+#include "battle/btl_input.h"
+#include "tag_team_revive.inc"
+#include "tag_team_relay.inc"
+#include "battle/tag_team_fusion.h"
+s32 TagFusion_Ticking(void){return BtlSeq_IsFighting() && !(Battle_GetWork()->flags&(BATTLE_FLAG_PAUSE|BATTLE_FLAG_LOADING));}
+void TagFusion_TestPause(s32 on){if(getenv("BT4_RENDER_TEST")&&getenv("BT4_TAG_FUSION_TEST")){if(on)Battle_GetWork()->flags|=BATTLE_FLAG_PAUSE;else Battle_GetWork()->flags&=~BATTLE_FLAG_PAUSE;}}
+#include "tag_team_assist_audit.inc"
+#include "tag_team_relay_audit.inc"
+#include "tag_team_revive_audit.inc"
+#include "tag_team_spectator_audit.inc"
+#include "tag_team_rules_audit.inc"
+#include "tag_team_damage_audit.inc"
+#include "tag_team_online_coop_audit.inc"
+
+static void TagOffline_UpdateSplitSpectators(void) {
+    if (!Battle_IsSplitScreen() || TagBattle_Network()) return;
+    const s32 canWatch = BtlSeq_IsFighting() &&
+        !(Battle_GetWork()->flags & (BATTLE_FLAG_PAUSE | BATTLE_FLAG_LOADING));
+    for (s32 player = 0; player < PAD_COUNT; ++player) {
+        const u32 pressed = canWatch ? gPad[player].gamePressed : 0;
+        const s32 direction = pressed & (PADG_R1 | PADG_RIGHT) ? 1 :
+                              pressed & (PADG_L1 | PADG_LEFT) ? -1 : 0;
+        const f32 *stick = gPad[player].right;
+        const f32 yaw = canWatch && (stick[0] > .15f || stick[0] < -.15f) ? stick[0] : 0;
+        const f32 pitch = canWatch && (stick[1] > .15f || stick[1] < -.15f) ? stick[1] : 0;
+        TagBattle_UpdateSplitSpectator(player, direction, yaw, pitch);
+    }
+}
+#endif
+
+static void TagOffline_ResetBeans(void){
+    extern int Port_TagOfflineBeans(void);
+    s32 actor, beans=Port_TagOfflineBeans();
+    for(actor=0;actor<10;++actor)sTagBeans[actor]=beans;
+}
+
+static void TagOffline_UseBeans(void){
+    extern int Port_TagOfflineBeans(void);
+    extern void BtlMember_AddHealth(void *,s32);
+    s32 actor;
+    if(!Port_TagOfflineBeans()||!BtlSeq_IsFighting()||
+       (Battle_GetWork()->flags&(BATTLE_FLAG_PAUSE|BATTLE_FLAG_LOADING)))return;
+    for(actor=0;actor<TagBattle_Count();++actor){
+        s32 hp,maximum;
+        if(!sTagBeans[actor])continue;
+        const TagHealthRule *healthRule = TagBattle_HealthRule(actor);
+        if (healthRule && healthRule->frozen) continue;
+        hp=BtlCharApi_GetHp(actor);
+        maximum=BtlCharApi_GetHpMax(actor);
+        if(hp<=0||hp>=maximum)continue;
+        if(BattleSide_GetControl(actor)==BTL_CONTROL_PAD){
+            Pad *pad=TagBattle_CommandPad(actor);
+            if(!(pad->held&PAD_L2)||!(pad->pressed&PAD_SELECT))continue;
+            TagBattle_ConsumeCommand(actor,PAD_SELECT);
+        }else if(hp>maximum/4)continue;
+        BtlMember_AddHealth(BtlChar_Get(actor),maximum-hp);
+        --sTagBeans[actor];
+        if(getenv("BT4_RENDER_TEST"))
+            fprintf(stderr,"tag offline: healed actor=%d, beans=%d\n",actor,sTagBeans[actor]);
+    }
+}
 
 /*
  * Battle scene top level, 0x12B570..0x12BD58. The frame order, the pause/restart/exit protocol and the
@@ -146,6 +210,9 @@ extern void BtlObj_UpdateVisibility(s32 view);
 extern void BtlObj_FinishVisibility(s32 split);
 extern void Gsc_Update(void);
 extern void BtlScript_Update(void);
+#ifdef PORT
+extern void PortPanels_SetBattleActive(s32 active);
+#endif
 /* Puts every battle subsystem back to the start of a match (first start and rematch) and fades in over 1 s. */
 s32 Battle_Restart(void) {
 #ifdef PORT
@@ -154,6 +221,10 @@ s32 Battle_Restart(void) {
     sceGsSyncPath(0, 0);
 #endif
     Snd_StopBankAndResume(0x3C);
+#ifdef BT4_TAG_TEAM_EXPANDED
+    /* Clear temporary pad ownership before the native roster reads its pads. */
+    TagFusion_Reset();
+#endif
     TagBattle_ResetPairs();
     if(TagBattle_Network())TagOnline_Reset();
     sTagResultActive=0;
@@ -164,6 +235,13 @@ s32 Battle_Restart(void) {
     BtlGame_Reset();
     BtlStage_Reset();
     BtlChar_ResetAll();
+    Training_Restart();
+    TagOffline_ResetBeans();
+#ifdef BT4_TAG_TEAM_EXPANDED
+    TagAssist_Reset();
+    TagRelay_Reset();
+    TagRevive_Reset();
+#endif
     Fade_ResetAll();
     Fade_Start(0, 1, 1.0f);
     return 0;
@@ -172,10 +250,7 @@ s32 Battle_Restart(void) {
 /* Loads the battle data, creates every battle subsystem, then starts the first match. */
 s32 Battle_Init(void) {
     DevRules_Reset();
-    /* Couch co-op (two local players, split screen) is not kept in step with anyone: it runs at the game's own
-       pace, not the online 114%, which also left the frame 14% less time and raised the pitch of every sound. */
-    {extern void Port_TagBattleRenderSet(s32);extern s32 TagBattle_CouchSplit(void);
-     Port_TagBattleRenderSet(TagBattle_Active()?(TagBattle_CouchSplit()?2:1):0);}
+    {extern void Port_TagBattleRenderSet(s32);Port_TagBattleRenderSet(TagBattle_Active());}
     Battle_Load();
     StgFx_Init();
     StgModel_InitStage();
@@ -187,12 +262,16 @@ s32 Battle_Init(void) {
     Ot_Init();
     BtlScene_Init(0);
     Battle_Restart();
+#ifdef PORT
+    PortPanels_SetBattleActive(1);
+#endif
     return 0;
 }
 
 /* Stores the result and destroys every battle subsystem. */
 s32 Battle_Term(void) {
 #ifdef PORT
+    PortPanels_SetBattleActive(0);
     sceGsSyncPath(0, 0);
 #endif
     {extern void Port_TagBattleRenderSet(s32);Port_TagBattleRenderSet(0);}
@@ -222,6 +301,12 @@ s32 Battle_Update(void) {
     Heap_TagCheck(0);
 
     BtlChars_UpdateInput();
+#ifdef BT4_TAG_TEAM_EXPANDED
+    TagFusion_Update();
+    TagAssist_Update();
+    TagRelay_Update();
+    TagRevive_Update();
+#endif
     Heap_TagCheck(10);
     BtlChars_UpdateMain();
     Heap_TagCheck(1);
@@ -247,13 +332,10 @@ s32 Battle_Update(void) {
     BtlObj_UpdateAll();
     if (Battle_IsSplitScreen() && !singleView) {
         for (i = 0; i < 2; i++) {
-            extern void TagBattle_SetViewSlot(s32 slot);
             BtlCam_SelectView(i);
-            TagBattle_SetViewSlot(i);
             BtlCam_ApplyView(0);
             BtlObj_UpdateVisibility(i);
         }
-        { extern void TagBattle_SetViewSlot(s32 slot); TagBattle_SetViewSlot(0); }
         BtlObj_FinishVisibility(1);
     } else {
         BtlObj_UpdateVisibility(0);
@@ -319,19 +401,15 @@ s32 Battle_Draw(void) {
 /* Draws the frame with two views: the stage pass and the fighter pass run once per view, the rest once. */
 s32 Battle_DrawSplit(void) {
     s32 i;
-    { extern void TagBattle_HudCaptureView(void *view); BtlCam_SelectView(0); TagBattle_HudCaptureView((void *)gBtlCamView); }
 
     Dbg_ProfMark(gBattleProf);
     Gfx_MarkPass(1);
     for (i = 0; i < 2; i++) {
-        extern void TagBattle_SetViewSlot(s32 slot);
         BtlCam_SelectView(i);
-        TagBattle_SetViewSlot(i);
         BtlCam_ApplyView(1);
         StgModel_Cull(gBtlCamView);
         StgModel_Draw(gBtlCamView);
     }
-    { extern void TagBattle_SetViewSlot(s32 slot); TagBattle_SetViewSlot(0); }
     Dbg_ProfColor(gBattleProf, 0x80FF4040);
     Dbg_ProfMark(gBattleProf);
     Gfx_MarkPass(3);
@@ -349,14 +427,11 @@ s32 Battle_DrawSplit(void) {
     Gfx_MarkPass(4);
     Gfx_AddDefaultEnv();
     for (i = 0; i < 2; i++) {
-        extern void TagBattle_SetViewSlot(s32 slot);
         BtlCam_SelectView(i);
-        TagBattle_SetViewSlot(i);
         BtlCam_ApplyView(1);
         BtlScene_Draw(i == 0);
         Ot_Draw();
     }
-    { extern void TagBattle_SetViewSlot(s32 slot); TagBattle_SetViewSlot(0); }
     Dbg_ProfColor(gBattleProf, 0x804040FF);
     Dbg_ProfMark(gBattleProf);
     Gfx_MarkPass(3);
@@ -379,44 +454,8 @@ s32 Battle_DrawSplit(void) {
     return 0;
 }
 
-/* Couch co-op: where a split-screen tick's time goes, written to the log every 300 ticks. sim = the game's
-   update, draw = building the picture lists, end = handing them over and waiting for the blanks, idle = the part
-   of that spent waiting (time to spare), tick = start to start. slow = ticks longer than two blanks + 2 ms. */
-typedef struct { unsigned long long sum[4], max[4], last; unsigned n, slow, skipped0; } CouchPerf;
-static CouchPerf sCouchPerf;
-static void CouchPerf_Tick(unsigned long long a, unsigned long long b, unsigned long long c, unsigned long long d, unsigned long long slept) {
-    extern unsigned long long Port_BlankNs(void);
-    extern void GsDraw_PerfStats(unsigned *pictureUs, unsigned *cap, unsigned *skipped);
-    CouchPerf *p = &sCouchPerf;
-    unsigned long long v[4];
-    s32 k;
-    unsigned pic, cap, skipped;
-    v[0] = b - a; v[1] = c - b; v[2] = d - c; v[3] = p->last ? d - p->last : 0;
-    p->last = d;
-    if (v[3] == 0) return;
-    if (p->n == 0) { GsDraw_PerfStats(&pic, &cap, &skipped); p->skipped0 = skipped; }
-    for (k = 0; k < 4; k++) { p->sum[k] += v[k]; if (v[k] > p->max[k]) p->max[k] = v[k]; }
-    p->slow += v[3] > 2ull * Port_BlankNs() + 2000000ull;
-    (void)slept;
-    if (++p->n >= 300) {
-        GsDraw_PerfStats(&pic, &cap, &skipped);
-        fprintf(stderr, "couch perf: ticks=%u slow=%u sim=%lu/%lu draw=%lu/%lu end=%lu/%lu tick=%lu/%lu us (avg/max) picture=%u us pictures-per-tick=%u undrawn=%u\n",
-                p->n, p->slow,
-                (unsigned long)(p->sum[0] / p->n / 1000ull), (unsigned long)(p->max[0] / 1000ull),
-                (unsigned long)(p->sum[1] / p->n / 1000ull), (unsigned long)(p->max[1] / 1000ull),
-                (unsigned long)(p->sum[2] / p->n / 1000ull), (unsigned long)(p->max[2] / 1000ull),
-                (unsigned long)(p->sum[3] / p->n / 1000ull), (unsigned long)(p->max[3] / 1000ull),
-                pic, cap, skipped - p->skipped0);
-        for (k = 0; k < 4; k++) { p->sum[k] = 0; p->max[k] = 0; }
-        p->n = p->slow = 0;
-    }
-}
-
 /* Runs battle frames until the sequence reports the end; restarts the match when BATTLE_FLAG_RESTART is raised. */
 void Battle_Loop(void) {
-    extern unsigned long long Port_PerfNs(void);
-    extern s32 TagBattle_CouchSplit(void);
-    unsigned long long perfA = 0, perfB = 0, perfC = 0;
     s32 draw;
     s32 done=0;
 
@@ -441,10 +480,11 @@ void Battle_Loop(void) {
                them on the shared simulation frame, once, not on every poll. */
             Job_Run();
         }
-        perfA = Port_PerfNs();
         Gfx_BeginFrame();
+        /* Online pad delivery belongs to gameplay, independently of the
+         * optional developer pause/rule controls. */
+        if(!TagBattle_Network()&&Port_NetActive())Pad_Update();
         if(DevRules_Online()){
-            if(!TagBattle_Network())Pad_Update();
             devPauseOwned=DevPause_Begin(DevRules_NetworkTick());
         }
         if (!(Battle_GetWork()->flags & BATTLE_FLAG_PAUSE)) {
@@ -462,6 +502,19 @@ void Battle_Loop(void) {
             }else spectatorTestFrames=0;
             s32 dir=(gPad[0].gamePressed&(PADG_R1|PADG_RIGHT))?1:(gPad[0].gamePressed&(PADG_L1|PADG_LEFT))?-1:0;
             TagBattle_UpdatePairs();if(!TagBattle_Network())TagBattle_UpdateSpectator(dir);
+            TagOffline_UseBeans();
+#ifdef BT4_TAG_TEAM_EXPANDED
+            TagCoop_NetworkSetup();
+            TagJoint_TestPads();
+            TagDamage_TestPads();
+            TagRelay_TestPads();
+            TagRevive_TestPads();
+            TagSpectator_TestPads();
+            TagOffline_UpdateSplitSpectators();
+            TagFusion_ReadPads();
+            TagRelay_ReadPads();
+            TagAssist_ReadPads();
+#endif
         }
         if(TagBattle_Active()){
             s32 actor;
@@ -471,26 +524,74 @@ void Battle_Loop(void) {
         }
         Snd_Update();
         Snd_SendFighters();
+        Training_Tick();
         BtlGame_PreUpdate();
         Battle_UpdateWork();
         BtlAiMgr_Update();
+#ifdef BT4_TAG_TEAM_EXPANDED
+        TagJoint_TestInput();
+        TagDamage_TestInput();
+        TagRelay_TestInput();
+        TagRevive_TestInput();
+        TagSpectator_TestInput();
+        {extern void TagFusion_TestInput(void);TagFusion_TestInput();}
+        TagRevive_PrepareInput();
+        TagAssist_PrepareInput();
+        TagCoop_NetworkInput();
+#endif
         BtlChars_SampleInput();
         draw = Battle_Update();
+#ifdef BT4_TAG_TEAM_EXPANDED
+        TagJoint_TestAfter();
+        TagDamage_TestAfter();
+        TagRelay_TestAfter();
+        TagRevive_TestAfter();
+        TagSpectator_TestAfter(draw);
+        {extern void TagFusion_TestAfterFrame(void);TagFusion_TestAfterFrame();}
+        TagCoop_NetworkAfter();
+        TagRules_Test();
+#endif
         done = BtlGame_Update();
-        perfB = Port_PerfNs();
+        if (TagBattle_Local() && BtlSeq_IsFighting() && getenv("BT4_RENDER_TEST") && getenv("BT4_TAG_HEALTH_TEST")) {
+            extern void TagHealth_TestAudit(void);
+            TagHealth_TestAudit();
+            exit(0);
+        }
         if(TagBattle_Network())TagOnline_Trace();
+#ifdef PORT
+        {
+            extern s32 Mods_SplitScreen(void),Port_PresentationSplitDrawing(s32);
+            extern s32 BtlCam_PresentationSplitBegin(void);
+            extern void BtlCam_PresentationSplitEnd(void),BtlObj_PresentationSplitSave(void),BtlObj_PresentationSplitRestore(void);
+            extern s32 gPortResim;
+            if(!gPortResim && Mods_SplitScreen() && BtlSeq_IsFighting() && BtlCam_PresentationSplitBegin()) {
+                s32 pane;
+                BtlObj_PresentationSplitSave();
+                Port_PresentationSplitDrawing(1);
+                for(pane=0;pane<2;++pane){BtlCam_SelectView(pane);BtlCam_ApplyView(0);BtlObj_UpdateVisibility(pane);}
+                BtlObj_FinishVisibility(1);
+                Battle_DrawSplit();
+                Port_PresentationSplitDrawing(0);
+                BtlObj_PresentationSplitRestore();
+                BtlCam_PresentationSplitEnd();
+            } else
+#endif
         if (Battle_IsSplitScreen() && draw) {
             Battle_DrawSplit();
         } else {
             Battle_Draw();
         }
+#ifdef PORT
+        }
+#endif
         TagBattle_ResultDraw();
-        perfC = Port_PerfNs();
+        if(getenv("BT4_RENDER_TEST")&&getenv("BT4_TAG_OFFLINE_BATTLE_CAPTURE")&&BtlSeq_IsFighting()){
+            static s32 captureFrames;
+            if(++captureFrames==120){extern void Port_TagUiCapture(s32);Port_TagUiCapture(93);}
+        }
         DevPause_End(devPauseOwned);
         Gfx_EndFrame(2);
         Dma_Flush();
-        if (TagBattle_CouchSplit()) CouchPerf_Tick(perfA, perfB, perfC, Port_PerfNs(), 0);
-        else sCouchPerf.last = 0;
     } while (!done);
 }
 

@@ -90,6 +90,9 @@ extern void DemoCam_Stop(void);
 
 /* Allocates and clears the record list, then the shape arena. */
 void EftHit_Init(void) {
+#ifdef BT4_TAG_TEAM_EXPANDED
+    {extern void EftDet_TagImpactReset(void);EftDet_TagImpactReset();}
+#endif
     gEftHitList = BtlPool_Alloc(BtlPool_GetCurrent(), sizeof(EftHitList));
     memset(gEftHitList, 0, sizeof(EftHitList));
     EftHitArena_Init();
@@ -97,6 +100,9 @@ void EftHit_Init(void) {
 
 /* Frees the shape arena and the record list. */
 void EftHit_Term(void) {
+#ifdef BT4_TAG_TEAM_EXPANDED
+    {extern void EftDet_TagImpactReset(void);EftDet_TagImpactReset();}
+#endif
     EftHitArena_Term();
     if (gEftHitList != NULL) {
         BtlPool_Free(BtlPool_GetCurrent(), gEftHitList);
@@ -163,6 +169,9 @@ void EftHit_BeginFrame(void) {
 
 /* Empties the list and rewinds the arena. */
 void EftHit_Clear(void) {
+#ifdef BT4_TAG_TEAM_EXPANDED
+    {extern void EftDet_TagImpactReset(void);EftDet_TagImpactReset();}
+#endif
     EftHitArena_Reset();
     gEftHitList->count = 0;
 }
@@ -171,6 +180,34 @@ void EftHit_Clear(void) {
 EftHitList *EftHit_GetList(void) {
     return gEftHitList;
 }
+
+#ifdef BT4_TAG_TEAM_EXPANDED
+s32 EftHit_TestStageDestruction(s32 objId) {
+    extern void BtlScene_CheckStageChange(void);
+    EftHitDef def = {0};
+    EftHitSrc src = {0};
+    EftHitTask task = {0};
+    EftHitList *list = EftHit_GetList();
+    if (!list || list->count >= EFT_HIT_MAX) return 0;
+    const s32 index = list->count++;
+    EftHitRec *record = &list->rec[index];
+    memset(record, 0, sizeof(*record));
+    def.flags = 0x200000;
+    task.flags = 1 | 0x4000;
+    src.def = &def;
+    src.objId = objId;
+    record->objId = objId;
+    record->type = EFT_HIT_TECH;
+    record->flags = EFT_HIT_FLAG_LAST;
+    record->src = &src;
+    record->task = &task;
+    BtlScene_CheckStageChange();
+    const s32 changed = (record->flags & EFT_HIT_FLAG_NO_IMPACT) != 0;
+    memset(record, 0, sizeof(*record));
+    --list->count;
+    return changed;
+}
+#endif
 
 /* Returns the flags of the task that owns record idx (0 when there is none). */
 s32 EftHit_GetTaskFlags(u32 idx) {
@@ -325,10 +362,7 @@ s32 EftHit_RearmImpact(EftHitRec *rec) {
 }
 
 /* Clash of two technique records: 4 = head-on (beam struggle), 1 / 2 = which one is passed, 3 = no clash rule. */
-/* A head-on pair (a moves toward b's previous position and the two movements oppose) stops the technique timers of
- * fighters 0 and 1 by literal id (EftTechEvt_RequestStop), whoever owns the records; the caller does not gate this
- * by contact. The kind test is a range test on the signed byte (`kind >= 0 && kind <= 2`) in an `if` of its own:
- * that is what gives lbu / sltiu and the later sign extension. */
+/* The caller owns contact detection and technique timer changes. */
 s32 EftHit_ClashTech(EftHitRec *a, EftHitRec *b) {
     EftHitDef *defA = a->src->def;
     EftHitDef *defB = b->src->def;
@@ -344,6 +378,11 @@ s32 EftHit_ClashTech(EftHitRec *a, EftHitRec *b) {
     if (!((defA->kind >= 0 && defA->kind <= 2) || defA->kind == 8)) {
         return 3;
     }
+#ifdef PORT
+    if (!((defB->kind >= 0 && defB->kind <= 2) || defB->kind == 8)) {
+        return 3;
+    }
+#endif
     if ((defA->flags & 0x100) || (defB->flags & 0x100) || defA->unk9 >= 2 || defB->unk9 >= 2) {
         return 3;
     }
@@ -352,8 +391,10 @@ s32 EftHit_ClashTech(EftHitRec *a, EftHitRec *b) {
     Vec4_Sub(&d, &b->prevPos, &a->prevPos);
     if (Vec3_Dot(&moveA, &d) > 0.0f && Vec3_Dot(&moveA, &moveB) < 0.0f) {
         result = 4;
+#ifndef PORT
         EftTechEvt_RequestStop(0);
         EftTechEvt_RequestStop(1);
+#endif
     } else {
         Vec4_Sub(&d, &a->pos, &b->pos);
         result = 2;

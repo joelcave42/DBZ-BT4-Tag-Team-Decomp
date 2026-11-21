@@ -723,9 +723,13 @@ void BtlAct_CheckForced(BtlActChr *chr) {
         BtlDecide_QueueAttack(chr, BtlAct_GetEvasionAttack(chr));
         BtlAct_Request(chr, BtlAct_GetQueued_(chr));
         /* BT4 0x19BEDC: three exchanges promote the contact into the aerial clash. */
-        if (chr == BtlChar_Get(0) && chr->unkD88 >= 3) {
-            BtlChar_SetFlag(BtlChar_Get(0), 0x62);
-            BtlChar_SetFlag(BtlChar_Get(1), 0x62);
+        if (chr->unkD88 >= 3 && (TagBattle_Active() || chr == BtlChar_Get(0))) {
+            extern s32 TagBattle_Target(s32),TagClash_BeginVanish(s32,s32);
+            s32 peer=TagBattle_Active()?TagBattle_Target(chr->player):1;
+            if(TagClash_BeginVanish(chr->player,peer)){
+                BtlChar_SetFlag(chr, 0x62);
+                BtlChar_SetFlag(BtlChar_Get(peer), 0x62);
+            }
         }
     }
     if (BtlChar_TestFlag(chr, 0x6D)) {
@@ -1182,9 +1186,24 @@ void BtlAct_Update(BtlActChr *chr) {
     BtlActHandler *tbl = gBtlActHandlers;
 
     BtlChar_SetStage(chr, 4);
+#ifdef BT4_TAG_TEAM_EXPANDED
+    {
+        extern s32 TagAssist_TakeTechnique(s32),TagRelay_TakeAction(s32),BtlAct_QueueTechnique(void *,s32);
+        s32 slot=TagAssist_TakeTechnique(chr->player);
+        s32 relay=TagRelay_TakeAction(chr->player);
+        if(slot>=0&&BtlAct_QueueTechnique(chr,slot)){
+            BtlAct_Request(chr,BtlAct_GetQueued_(chr));
+        }else if(relay>=0){
+            BtlAct_Request(chr,relay);
+        }else if(tbl[act->current]!=NULL){
+            tbl[act->current](chr,BTLACT_PHASE_DECIDE);
+        }
+    }
+#else
     if (tbl[act->current] != NULL) {
         tbl[act->current](chr, BTLACT_PHASE_DECIDE);
     }
+#endif
     BtlAct_CheckForced(chr);
     if (act->request != -1) {
         if (tbl[act->current] != NULL) {

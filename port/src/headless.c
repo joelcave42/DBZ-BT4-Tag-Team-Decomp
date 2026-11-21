@@ -260,6 +260,20 @@ int __wrap_Progress_Main(int arg) {
             extern unsigned char GAME_PTR Battle_GetSetup(void);
             *(int GAME_PTR)(Battle_GetSetup()+8)=0;
         }
+        if(getenv("BT4_RENDER_TEST")&&getenv("BT4_HUD_TEAM_TEST")) {
+            extern void BattleSetup_SetRule(int,int,int,int,int,int,int);
+            extern void BattleSetup_SetSide(int,int,int,int,int,int,int,void GAME_PTR);
+            extern void BattleSetup_SetMember(int,int,int,int,int,int,float,void GAME_PTR);
+            extern void BattleSetup_Finish(void);
+            int side,member;
+            BattleSetup_SetRule(0,0,54,0,7,0,0);
+            for(side=0;side<2;++side) {
+                BattleSetup_SetSide(side,side?2:0,side? -1:0,5,0,0,0,NULL);
+                for(member=0;member<5;++member)
+                    BattleSetup_SetMember(side,member,(side*5+member)*2,0,0,1,100.0f,NULL);
+            }
+            BattleSetup_Finish();
+        }
         /* BT3_CHARA=<id> (and BT3_COSTUME=<n>, BT3_VARIANT=1 for the damaged model): side 0's fighter of the demo
            battle, for looking at one character's model without going through the menus */
         extern struct { int chara, costume, variant; } GAME_PTR BattleSide_GetMember(int side, int index);
@@ -500,20 +514,24 @@ void Port_Trace(unsigned vblanks) {
         extern void PortVoice_World(int,int,int,const float *);
         extern int BattleSide_GetObjId(int);
         extern void BtlCharApi_GetBasePos(int,float *);
-        extern void PortAudio_World(int,int,int,const float *,const int *);
-        float positions[40]={0};int alive[10]={0};int count=0,mode=0,listener=0,a;
+        extern void PortAudio_World(int,int,int,int,const float *,const int *);
+        float positions[40]={0};int alive[10]={0};int count=0,mode=0,listener=0,secondListener=-1,a;
         if(gBtlSeq&&gBtlSeq->state==3){
             if(TagBattle_Active()){mode=2;count=TagBattle_Count();listener=TagBattle_ViewActor();}
             else if(Port_NetActive()){mode=1;count=2;listener=Port_NetView();}
+#ifdef BT4_TAG_TEAM_EXPANDED
+            if(mode==2){
+                extern int Battle_IsSplitScreen(void),Port_TagOfflineMode(void),TagBattle_SplitViewActor(int);
+                if(Port_TagOfflineMode()==2&&Battle_IsSplitScreen()){
+                    listener=TagBattle_SplitViewActor(0);
+                    secondListener=TagBattle_SplitViewActor(1);
+                }
+            }
+#endif
             for(a=0;a<count;++a){int object=BattleSide_GetObjId(a);BtlCharApi_GetBasePos(object,positions+a*4);alive[a]=BtlCharApi_GetHp(object)>0;}
         }
         PortVoice_World(mode,listener,count,positions);
-        {
-            extern void PortAudio_SecondListener(int actor);
-            extern int TagBattle_CouchSplit(void),TagBattle_CouchActor(void);
-            PortAudio_SecondListener(mode==2&&TagBattle_CouchSplit()?TagBattle_CouchActor():-1);
-        }
-        PortAudio_World(mode==2,listener,count,positions,alive);
+        PortAudio_World(mode==2,listener,secondListener,count,positions,alive);
     }
     if ((getenv("BT4_TAG_ACTOR_TEST") != NULL || getenv("BT4_TAG_LOCAL_TEST") != NULL) && gBtlSeq != NULL && gBtlSeq->state >= 2 && vblanks % 120 == 0) {
         extern int TagBattle_Count(void),TagBattle_Team(int),TagBattle_Target(int), BtlAiMgr_GetLevel(int side);
@@ -626,6 +644,10 @@ void Port_Trace(unsigned vblanks) {
         fflush(stdout);
         exit(failed ? 3 : 0);
     }
+    if(getenv("BT4_RENDER_TEST")&&getenv("BT4_TAG_CLASH_SCENE_TEST")&&!Port_NetSession()&&gBtlSeq&&gBtlSeq->state==3&&BtlSeq_GetClock()[0]>=180){
+        extern int TagClash_SceneStep(int);int result=TagClash_SceneStep(atoi(getenv("BT4_TAG_CLASH_SCENE_TEST")));
+        if(result>=0){fflush(stdout);exit(result);}
+    }
     if (getenv("BT4_TAG_CLASH_REGRESSION") && gBtlSeq && gBtlSeq->state==3 && BtlSeq_GetClock()[0]>=150) {
         extern int TagClash_RunRegression(void);
         int failed=TagClash_RunRegression();fflush(stdout);exit(failed?3:0);
@@ -731,7 +753,8 @@ void Port_Trace(unsigned vblanks) {
         }
         if (started && *(int GAME_PTR)(chr+0x948) >= 0x106 && *(int GAME_PTR)(chr+0x948) <= 0x126) entered = 1;
         if(started&&getenv("BT4_TEST_ACTION")&&*(int GAME_PTR)(chr+0x948)>=0xB4&&*(int GAME_PTR)(chr+0x948)<=0xBF)entered=1;
-        if (entered && vblanks-began > 180 && *(int GAME_PTR)(chr+0x948) < 0xFD && *(int GAME_PTR)(other+0x948) < 0xFD && (!getenv("BT4_TEST_ACTION")||*(int GAME_PTR)(chr+0x948)<0xB4||*(int GAME_PTR)(chr+0x948)>0xBF)) {
+        extern int Bt4BodyChange_Active(int);
+        if (entered && !Bt4BodyChange_Active(actor) && !Bt4BodyChange_Active(victim) && vblanks-began > 180 && *(int GAME_PTR)(chr+0x948) < 0xFD && *(int GAME_PTR)(other+0x948) < 0xFD && (!getenv("BT4_TEST_ACTION")||*(int GAME_PTR)(chr+0x948)<0xB4||*(int GAME_PTR)(chr+0x948)>0xBF)) {
             if(!recovered){recovered=vblanks;fprintf(stderr,"bt4: tech recovered vb=%u\n",vblanks);}
             if(getenv("BT4_TAG_OWNERSHIP_TEST")&&vblanks-recovered<120)return;
             fprintf(stderr,"bt4: tech end action=%x tick=%d\n",*(int GAME_PTR)(chr+0x948),tick);

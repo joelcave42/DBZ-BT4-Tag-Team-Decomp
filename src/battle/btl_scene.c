@@ -7,6 +7,12 @@ extern int TagBattle_Active(void);
 #include "battle/btl_scene.h"
 #include "sys/common.h"
 #include "sys/heap.h"
+#ifdef BT4_TAG_TEAM_EXPANDED
+extern s32 BtlStage_GetChangeTarget(void);
+extern s32 BtlStage_GetId(void);
+extern s32 BtlLoad_RequestStageChange(s32 stage);
+extern s32 EftDet_TagHitTarget(s32 index, s32 preferred);
+#endif
 
 /*
  * Battle effect scene, 0x12C9F0..0x12DD80: the task tree the fighter-attached effects run in and the services
@@ -392,6 +398,10 @@ void BtlScene_SetSingleView(s32 singleView) {
 
 /* Returns 1 when one view is drawn (not split-screen, or the camera forced it). */
 s32 BtlScene_IsSingleView(void) {
+#ifdef PORT
+    extern s32 Port_PresentationSplitDrawing(s32);
+    if(Port_PresentationSplitDrawing(-1))return 0;
+#endif
     if (!Battle_IsSplitScreen()) {
         return 1;
     }
@@ -625,25 +635,37 @@ void BtlScene_CheckStageChange(void) {
     if (!BtlGame_IsFighting()) {
         return;
     }
+    s32 canDestroy = Battle_GetRuleUnk10();
+#ifdef BT4_TAG_TEAM_EXPANDED
+    s32 nextStage = -1;
+    if (TagBattle_Active()) {
+        nextStage = BtlStage_GetChangeTarget();
+        /* The destination can name the same stage by its native ID, even
+         * when the selected entry is a BT4 variant with a different ID. */
+        if (nextStage == Battle_GetStage() || nextStage == BtlStage_GetId()) nextStage = -1;
+        canDestroy = canDestroy && nextStage >= 0;
+    }
+#endif
     for (i = 0; i < list->count; i++) {
         rec = &list->rec[i];
         hit = 0;
         target = BtlCharApi_GetOpponentObjId(rec->objId);
         attr = EftHit_GetTaskFlags(i);
         if (rec->active != 0) {
-            if (Battle_GetRuleUnk10() && EftHit_HasDefFlag200000(rec) && BtlCharApi_IsTargetBelowHalfHp(rec->objId, target)) {
+            if (canDestroy && EftHit_HasDefFlag200000(rec) && BtlCharApi_IsTargetBelowHalfHp(rec->objId, target)) {
                 hit = 1;
-            } else if (BtlCharApi_CanTechniqueFinish(rec->objId, target)) {
-                hit = 2;
             } else {
-                hit = 0;
+#ifdef BT4_TAG_TEAM_EXPANDED
+                if (TagBattle_Active()) target = EftDet_TagHitTarget(i, target);
+#endif
+                if (target >= 0 && BtlCharApi_CanTechniqueFinish(rec->objId, target)) hit = 2;
             }
             if (hit != 0) {
                 if ((attr & 3) == 1) {
                     if (attr & 0x4000) {
                         if (rec->flags & 0x10) {
                             found = 1;
-                            if (hit == 1) {
+                            if (hit == 1 && !TagBattle_Active()) {
                                 rec->flags |= 2;
                                 rec->flags |= 8;
                             }
@@ -651,7 +673,7 @@ void BtlScene_CheckStageChange(void) {
                         }
                     } else {
                         found = 1;
-                        if (hit == 1) {
+                        if (hit == 1 && !TagBattle_Active()) {
                             rec->flags |= 2;
                             rec->flags |= 8;
                         }
@@ -665,9 +687,18 @@ void BtlScene_CheckStageChange(void) {
         BtlScene_ClearStageChangeRequest();
         hit = 1;
         found = 1;
+        rec = NULL;
     }
     if (found) {
         if (hit == 1) {
+#ifdef BT4_TAG_TEAM_EXPANDED
+            if (TagBattle_Active()) {
+                if (BtlLoad_RequestStageChange(nextStage) && rec != NULL) {
+                    rec->flags |= 2 | 8;
+                }
+                return;
+            }
+#endif
             BtlStage_RequestChange();
         } else if (hit == 2) {
             BtlCharApi_SetHeldFlagAB(target);
